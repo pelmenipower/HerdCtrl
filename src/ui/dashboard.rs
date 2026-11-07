@@ -1,6 +1,7 @@
 use super::{
     app_picker::AppPicker,
     canvas::{self, Canvas},
+    hotkey_input::{self, Recorder},
     identify::{Event as IdentifyEvent, Identification},
     zone_editor,
 };
@@ -47,6 +48,7 @@ pub struct Dashboard {
     identification: Identification,
     identify_return_focus: bool,
     confirm_delete: Option<usize>,
+    hotkey_recorder: Recorder,
 }
 
 impl Dashboard {
@@ -100,6 +102,7 @@ impl Dashboard {
             identification: Identification::default(),
             identify_return_focus: false,
             confirm_delete: None,
+            hotkey_recorder: Recorder::default(),
         };
         app.refresh();
         app.register_hotkeys();
@@ -191,6 +194,7 @@ impl Dashboard {
         }
         self.config.views.remove(index);
         self.selected_view = selection_after_removal(index, self.config.views.len());
+        self.hotkey_recorder = Recorder::default();
         self.selected_zone = self
             .config
             .views
@@ -416,6 +420,7 @@ impl eframe::App for Dashboard {
                     {
                         self.selected_view = index;
                         self.selected_zone = (!view.zones.is_empty()).then_some(0);
+                        self.hotkey_recorder = Recorder::default();
                     }
                 }
                 if ui.button("+ New view").clicked() {
@@ -426,6 +431,7 @@ impl eframe::App for Dashboard {
                     });
                     self.selected_view = self.config.views.len() - 1;
                     self.selected_zone = None;
+                    self.hotkey_recorder = Recorder::default();
                     self.dirty = true;
                 }
                 if ui.add_enabled(
@@ -437,6 +443,7 @@ impl eframe::App for Dashboard {
                     if let Some(index) = self.config.duplicate_view(self.selected_view) {
                         self.selected_view = index;
                         self.selected_zone = (!self.config.views[index].zones.is_empty()).then_some(0);
+                        self.hotkey_recorder = Recorder::default();
                         self.app_picker = None;
                         reset_canvas(&mut self.canvas);
                         self.dirty = true;
@@ -510,13 +517,8 @@ impl eframe::App for Dashboard {
             ui.horizontal(|ui| {
                 self.dirty |= ui.text_edit_singleline(&mut view.name).changed();
                 ui.label("Hotkey");
-                self.dirty |= ui
-                    .add(
-                        egui::TextEdit::singleline(&mut view.hotkey)
-                            .hint_text("Super+Shift+KeyD")
-                            .desired_width(175.0),
-                    )
-                    .changed();
+                self.dirty |=
+                    hotkey_input::show(ui, &mut self.hotkey_recorder, &mut view.hotkey);
                 request_delete = ui.button("Delete view").clicked();
             });
             ui.horizontal(|ui| {
