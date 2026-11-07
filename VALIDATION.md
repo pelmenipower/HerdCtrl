@@ -11,7 +11,7 @@
 | 4.5 Launch and move engine | Reuses identifiable existing application/terminal windows, starts missing ones and reserves each window once per view. Real Zen/herdr reuse and a fresh terminal program with an actual TTY passed, including repeated launches. Four-monitor Wayland/XWayland launch/resize tests also pass. Separate X11-session acceptance remains open. |
 | 4.6 GNOME / Wayland | Extension active and bridge connected on GNOME 50.1. Live engine, GUI launch and compositor shortcut tests pass. Native absolute origin, fractional scaling, real hotplug, unrelated-window geometry and extension recovery remain open. |
 | 5 Structure | Separate core, UI and Linux OS modules. Editable SVG icon and exported 256-pixel PNG provided; PNG is embedded in the native window. Desktop icon presentation remains unverified. |
-| 6 Binary <15 MB | 4,852,872 bytes (4.85 MB), optimized and stripped x86_64 Linux build; meets size target. |
+| 6 Binary <15 MB | 4,896,192 bytes (4.90 MB), optimized and stripped x86_64 Linux build after the 2026-11-07 review fixes; meets size target. |
 | 6 Warm startup <100 ms | Latest five warm visibility samples: median 86.20 ms, range 75.95–96.78 ms. Visibility is not first rendered frame; first-frame acceptance remains open. |
 | 6 Active RSS <30 MB | Fails: median main-process RSS 80,356 KiB (~78.5 MiB) over nine starts one second after the window appears (2026-11-07 investigation, unchanged build). About 41 MB of it is Mesa's `libLLVM` mapping and ~10 MB is `libgallium`; no kept code change reduced it. Identification additionally uses one temporary helper process; its sampled RSS was 81,220 KiB (~83.2 MB) for four labels. See "RSS investigation — 2026-11-07". |
 | 6 Reliability | UI does not perform helper-process polling. Five-second polling budget after launch delay; helper-process timeouts can extend elapsed completion time. |
@@ -204,3 +204,15 @@ LLVM alone accounts for about 53 % of the RSS. A bare process that only `dlopen`
 **Limits.** The metric is RSS one second after the window appears, not peak memory. The `wgpu` figures are diagnostic, and no pixel output was verified for them. Driver mappings depend on the host's Mesa and GPU, so the numbers apply to this machine only. The single-session noise is about 3 MB.
 
 **Checks.** `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (43 passed, seven opt-in integration tests ignored), `cargo build --release --locked` and `bash -n scripts/measure-rss.sh` passed. Binary size is 4,868,312 bytes. The only committed change is the new `scripts/measure-rss.sh` and this section.
+
+## Review fixes — 2026-11-07
+
+Changes after the review of the GNOME/app-picker baseline (`f925206`):
+
+- PRD 4.5: Two zones using the same application can no longer swap windows. A new window is assigned to a zone first from its own process tree; a match by application identity alone is rejected when the window descends from another zone's launch, and terminal sessions with a program must carry their own program marker. Zones of the same application launch sequentially. Per the user's decision, an existing window is moved; each additional zone opens another window, using the desktop entry's new-window action when the app is already running. Unit tests: `pick_*`, `process_ancestry_follows_parent_chain`, `only_plain_same_app_launches_share_a_lock_key`, `new_window_action_skips_private_actions`.
+- PRD 4.5: The default terminal for **Run in terminal** falls back through common terminals; terminals without desktop exec-argument keys get known arguments. Tests: `known_terminals_get_program_arguments`, `terminal_without_desktop_keys_gets_known_arguments`, `default_terminal_prefers_xdg_then_known_usable_terminals`.
+- PRD 4.3/4.4: View deletion asks for confirmation and immediately re-registers the remaining views' hotkeys with their new indices; open app pickers and canvas drags for deleted items are cancelled. Test: `selects_previous_view_after_removal`.
+- PRD 4.4: The hotkey is entered with modifier toggles plus a recorded key instead of free text (egui does not report Super as a modifier on Linux). Every recordable key is tested to parse as a global hotkey and to convert to a GNOME accelerator. Unrepresentable stored strings stay visible with a Clear button.
+- Structure: the zone property editor moved to `src/ui/zone_editor.rs` without behaviour change.
+- Checks: `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (56 passed, seven opt-in integration tests ignored) and `cargo build --release --locked` passed.
+- Not verified on a real desktop: two zones of the same single-instance app (e.g. two Zen or Nautilus windows), two terminals with different programs in one view, the hotkey recorder and the delete dialog. These need a live GNOME 50 / X11 check.
