@@ -1,7 +1,7 @@
 use super::{applications, config::View};
 use crate::os::{linux, Backend};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     process::{Command, Stdio},
     sync::mpsc::Sender,
     thread,
@@ -46,8 +46,9 @@ pub fn launch(view: View, events: Sender<String>) {
         };
         let initial: HashSet<_> = windows.iter().map(|window| window.id.clone()).collect();
         let claimed = std::sync::Mutex::new(HashSet::new());
+        let roots = std::sync::Mutex::new(HashMap::new());
         thread::scope(|scope| {
-            for zone in view.zones {
+            for (index, zone) in view.zones.into_iter().enumerate() {
                 let Some(monitor) = monitors
                     .iter()
                     .find(|monitor| monitor.name == zone.monitor)
@@ -105,6 +106,7 @@ pub fn launch(view: View, events: Sender<String>) {
                 let events = events.clone();
                 let initial = &initial;
                 let claimed = &claimed;
+                let roots = &roots;
                 scope.spawn(move || {
                     let result = if let Some(window) = reused {
                         backend
@@ -112,6 +114,7 @@ pub fn launch(view: View, events: Sender<String>) {
                             .map(|()| true)
                     } else {
                         launch_new(
+                            index,
                             &zone,
                             selected_app.as_ref(),
                             matcher.as_ref(),
@@ -119,6 +122,7 @@ pub fn launch(view: View, events: Sender<String>) {
                             &monitor,
                             initial,
                             claimed,
+                            roots,
                         )
                         .map(|()| false)
                     };
@@ -134,7 +138,9 @@ pub fn launch(view: View, events: Sender<String>) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn launch_new(
+    index: usize,
     zone: &super::config::Zone,
     app: Option<&applications::InstalledApp>,
     matcher: Option<&matching::AppMatcher>,
@@ -142,6 +148,7 @@ fn launch_new(
     monitor: &super::monitor::Monitor,
     initial: &HashSet<String>,
     claimed: &std::sync::Mutex<HashSet<String>>,
+    roots: &std::sync::Mutex<HashMap<usize, u32>>,
 ) -> Result<(), String> {
     let script = if zone.run_in_terminal {
         &zone.command
@@ -168,6 +175,10 @@ fn launch_new(
         .spawn()
         .map_err(|error| format!("Could not start application: {error}"))?;
     let pid = child.id();
+    roots
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(index, pid);
     let (exit_tx, exit_rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
         if let Ok(status) = child.wait() {
@@ -182,12 +193,23 @@ fn launch_new(
         if Instant::now() >= delay_end {
             let windows = backend.windows()?;
             let mut claimed = claimed.lock().unwrap_or_else(|error| error.into_inner());
-            let window = matching::reserve(
-                windows
-                    .into_iter()
-                    .filter(|window| belongs_to_new_launch(window, initial, &pids, matcher)),
-                &mut claimed,
-            );
+            let other_roots: HashSet<u32> = roots
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .iter()
+                .filter(|(zone, _)| **zone != index)
+                .map(|(_, root)| *root)
+                .collect();
+            let weak = |window: &linux::Window| {
+                matcher.is_some_and(|matcher| matcher.owns_pid(window.pid))
+                    && !linux::has_ancestor(window.pid, &other_roots)
+                    && (script.trim().is_empty()
+                        || matching::ProcessIdentity::read(window.pid)
+                            .terminal_command
+                            .as_deref()
+                            == Some(script.as_str()))
+            };
+            let window = pick(windows, initial, &pids, weak, &mut claimed);
             drop(claimed);
             if let Some(window) = window {
                 return backend.position(&window, monitor, zone.bounds.pixels(monitor));
@@ -205,42 +227,79 @@ fn launch_new(
     }
 }
 
-fn belongs_to_new_launch(
-    window: &linux::Window,
-    existing: &HashSet<String>,
-    pids: &HashSet<u32>,
-    matcher: Option<&matching::AppMatcher>,
-) -> bool {
-    !existing.contains(&window.id)
-        && (pids.contains(&window.pid) || matcher.is_some_and(|app| app.owns_pid(window.pid)))
+fn pick(
+    windows: Vec<linux::Window>,
+    initial: &HashSet<String>,
+    own: &HashSet<u32>,
+    weak: impl Fn(&linux::Window) -> bool,
+    claimed: &mut HashSet<String>,
+) -> Option<linux::Window> {
+    let fresh: Vec<_> = windows
+        .into_iter()
+        .filter(|window| !initial.contains(&window.id) && !claimed.contains(&window.id))
+        .collect();
+    let strong: Vec<_> = fresh
+        .iter()
+        .filter(|window| own.contains(&window.pid))
+        .cloned()
+        .collect();
+    let tier = if strong.is_empty() {
+        fresh.into_iter().filter(|window| weak(window)).collect()
+    } else {
+        strong
+    };
+    matching::reserve(tier, claimed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn window(id: &str, pid: u32) -> linux::Window {
+        linux::Window { id: id.into(), pid }
+    }
+
     #[test]
-    fn ignores_existing_windows_and_unrelated_processes() {
+    fn pick_prefers_own_tree_and_ignores_existing_or_claimed_windows() {
         let existing = HashSet::from(["old".to_string()]);
-        let pids = HashSet::from([123, 124]);
-        let windows = [
-            linux::Window {
-                id: "old".into(),
-                pid: 123,
-            },
-            linux::Window {
-                id: "unrelated".into(),
-                pid: 999,
-            },
-            linux::Window {
-                id: "child".into(),
-                pid: 124,
-            },
-        ];
-        let matches: Vec<_> = windows
-            .iter()
-            .filter(|window| belongs_to_new_launch(window, &existing, &pids, None))
-            .map(|window| window.id.as_str())
-            .collect();
-        assert_eq!(matches, ["child"]);
+        let own = HashSet::from([124]);
+        let windows = || {
+            vec![
+                window("old", 124),
+                window("unrelated", 999),
+                window("weak", 200),
+                window("child", 124),
+            ]
+        };
+        let mut claimed = HashSet::new();
+        let weak = |window: &linux::Window| window.pid == 200;
+        let picked = pick(windows(), &existing, &own, weak, &mut claimed).unwrap();
+        assert_eq!(picked.id, "child");
+        assert!(pick(windows(), &existing, &own, weak, &mut claimed)
+            .is_some_and(|window| window.id == "weak"));
+        assert!(pick(windows(), &existing, &own, weak, &mut claimed).is_none());
+    }
+
+    #[test]
+    fn pick_uses_weak_matches_only_without_own_windows() {
+        let own = HashSet::from([124]);
+        let windows = vec![window("weak", 200), window("rejected", 201)];
+        let mut claimed = HashSet::new();
+        let picked = pick(
+            windows,
+            &HashSet::new(),
+            &own,
+            |window| window.id == "weak",
+            &mut claimed,
+        );
+        assert_eq!(picked.map(|window| window.id), Some("weak".into()));
+        let mut claimed = HashSet::new();
+        let picked = pick(
+            vec![window("weak", 200), window("child", 124)],
+            &HashSet::new(),
+            &own,
+            |_| false,
+            &mut claimed,
+        );
+        assert_eq!(picked.map(|window| window.id), Some("child".into()));
     }
 }
