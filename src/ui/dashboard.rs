@@ -1,11 +1,16 @@
-use super::canvas::Canvas;
+use super::{
+    app_picker::AppPicker,
+    canvas::{self, Canvas},
+    identify::{Event as IdentifyEvent, Identification},
+};
 use crate::{
     core::{
+        applications::{self, InstalledApp},
         config::{Config, View},
         launcher,
-        monitor::Monitor,
+        monitor::{sort_for_display, Monitor},
     },
-    os::linux,
+    os::{gnome, Backend},
 };
 use eframe::egui::{self, Color32, RichText};
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
@@ -28,9 +33,18 @@ pub struct Dashboard {
     selected_zone: Option<usize>,
     canvas: Canvas,
     hotkeys: Option<GlobalHotKeyManager>,
+    gnome_hotkeys: Option<gnome::hotkeys::Hotkeys>,
+    backend: Backend,
     bindings: Vec<(HotKey, usize)>,
     dirty: bool,
     close_dialog: bool,
+    applications: Vec<InstalledApp>,
+    applications_rx: Receiver<Vec<InstalledApp>>,
+    applications_tx: Sender<Vec<InstalledApp>>,
+    applications_loading: bool,
+    app_picker: Option<AppPicker>,
+    identification: Identification,
+    identify_return_focus: bool,
 }
 
 impl Dashboard {
@@ -42,9 +56,19 @@ impl Dashboard {
         cc.egui_ctx.set_style(style);
         let (events, messages) = mpsc::channel();
         let (monitor_tx, monitor_rx) = mpsc::channel();
-        let manager = GlobalHotKeyManager::new();
-        let mut log = vec!["Ready. Draw zones, assign commands, then save your view.".into()];
-        if let Err(e) = &manager {
+        let (applications_tx, applications_rx) = mpsc::channel();
+        let selected_zone = config
+            .views
+            .first()
+            .and_then(|view| (!view.zones.is_empty()).then_some(0));
+        let backend = Backend::detect();
+        let manager = if backend == Backend::X11 {
+            Some(GlobalHotKeyManager::new())
+        } else {
+            None
+        };
+        let mut log = vec!["Ready. Draw zones, choose applications, then save your view.".into()];
+        if let Some(Err(e)) = &manager {
             log.push(format!("Global hotkeys unavailable: {e}"));
         }
         let mut app = Self {
@@ -54,29 +78,88 @@ impl Dashboard {
             monitor_rx,
             monitor_tx,
             messages,
+            gnome_hotkeys: (backend == Backend::Gnome)
+                .then(|| gnome::hotkeys::Hotkeys::new(events.clone())),
+            backend,
             events,
             log,
             selected_view: 0,
-            selected_zone: None,
+            selected_zone,
             canvas: Canvas::default(),
-            hotkeys: manager.ok(),
+            hotkeys: manager.and_then(Result::ok),
             bindings: Vec::new(),
             dirty: false,
             close_dialog: false,
+            applications: Vec::new(),
+            applications_rx,
+            applications_tx,
+            applications_loading: false,
+            app_picker: None,
+            identification: Identification::default(),
+            identify_return_focus: false,
         };
         app.refresh();
         app.register_hotkeys();
+        app.refresh_applications();
         app
     }
 
     fn refresh(&self) {
         let tx = self.monitor_tx.clone();
+        let backend = self.backend;
         std::thread::spawn(move || {
-            let _ = tx.send(linux::monitors());
+            let _ = tx.send(backend.monitors());
         });
     }
 
+    fn refresh_applications(&mut self) {
+        self.applications_loading = true;
+        let tx = self.applications_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(applications::discover());
+        });
+    }
+
+    fn show_app_picker(&mut self, ctx: &egui::Context) {
+        let Some(picker) = &mut self.app_picker else {
+            return;
+        };
+        let choice = picker.show(ctx, &self.applications, self.applications_loading);
+        if let Some(application) = choice.selected {
+            let is_terminal = self
+                .applications
+                .iter()
+                .any(|app| app.application.id == application.id && app.is_terminal);
+            if let Some(zone) = self
+                .config
+                .views
+                .get_mut(picker.view)
+                .and_then(|view| view.zones.get_mut(picker.zone))
+            {
+                if is_terminal && zone.application.is_none() && !zone.command.trim().is_empty() {
+                    zone.terminal_command = zone.command.clone();
+                } else if !is_terminal {
+                    zone.terminal_command.clear();
+                }
+                zone.application = Some(application);
+                zone.command.clear();
+                zone.run_in_terminal = false;
+                self.dirty = true;
+            }
+        }
+        if choice.close {
+            self.app_picker = None;
+        }
+        if choice.refresh {
+            self.refresh_applications();
+        }
+    }
+
     fn register_hotkeys(&mut self) {
+        if let Some(hotkeys) = &mut self.gnome_hotkeys {
+            hotkeys.configure(&self.config.views);
+            return;
+        }
         let Some(manager) = &self.hotkeys else {
             return;
         };
@@ -129,9 +212,38 @@ impl Dashboard {
 impl eframe::App for Dashboard {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(100));
+        while let Some(event) = self.identification.poll() {
+            match event {
+                IdentifyEvent::Shown(labels) => {
+                    if self.identify_return_focus {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                    self.identify_return_focus = false;
+                    self.log.push(format!(
+                        "Monitor numbers shown for 5 seconds: {}",
+                        labels
+                            .iter()
+                            .map(|label| format!("{} · {}", label.number, label.monitor))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                IdentifyEvent::Finished(Ok(())) => {}
+                IdentifyEvent::Finished(Err(error)) => self
+                    .log
+                    .push(format!("Could not identify monitors: {error}")),
+            }
+        }
+        while let Ok(applications) = self.applications_rx.try_recv() {
+            self.applications = applications;
+            self.applications_loading = false;
+        }
         while let Ok(result) = self.monitor_rx.try_recv() {
             match result {
-                Ok(monitors) => self.monitors = monitors,
+                Ok(mut monitors) => {
+                    sort_for_display(&mut monitors);
+                    self.monitors = monitors;
+                }
                 Err(e) => {
                     self.monitors.clear();
                     self.log.push(e);
@@ -140,6 +252,11 @@ impl eframe::App for Dashboard {
         }
         while let Ok(message) = self.messages.try_recv() {
             self.log.push(message);
+        }
+        if let Some(hotkeys) = &self.gnome_hotkeys {
+            while let Some(index) = hotkeys.take_trigger() {
+                self.run(index);
+            }
         }
         while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
             if event.state == HotKeyState::Pressed {
@@ -196,7 +313,29 @@ impl eframe::App for Dashboard {
                         self.save();
                     }
                     if ui.button("Refresh displays").clicked() {
+                        self.identification.stop();
                         self.refresh();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.identification.active() || !self.monitors.is_empty(),
+                            egui::Button::new(if self.identification.active() {
+                                "Hide numbers"
+                            } else {
+                                "Identify monitors"
+                            }),
+                        )
+                        .on_hover_text("Show matching numbers on your screens for 5 seconds")
+                        .clicked()
+                    {
+                        if self.identification.active() {
+                            self.identification.stop();
+                        } else {
+                            self.identify_return_focus =
+                                ctx.input(|input| input.viewport().focused.unwrap_or(false));
+                            self.identification
+                                .start(self.backend, self.monitors.clone());
+                        }
                     }
                 });
             });
@@ -213,7 +352,7 @@ impl eframe::App for Dashboard {
                         .clicked()
                     {
                         self.selected_view = index;
-                        self.selected_zone = None;
+                        self.selected_zone = (!view.zones.is_empty()).then_some(0);
                     }
                 }
                 if ui.button("+ New view").clicked() {
@@ -226,23 +365,63 @@ impl eframe::App for Dashboard {
                     self.selected_zone = None;
                     self.dirty = true;
                 }
+                if ui.add_enabled(
+                    self.config.views.get(self.selected_view).is_some(),
+                    egui::Button::new("Duplicate view"),
+                ).on_hover_text("Copy this view with all zones and applications. Assign a separate hotkey to the copy.")
+                    .clicked()
+                {
+                    if let Some(index) = self.config.duplicate_view(self.selected_view) {
+                        self.selected_view = index;
+                        self.selected_zone = (!self.config.views[index].zones.is_empty()).then_some(0);
+                        self.app_picker = None;
+                        let snap_enabled = self.canvas.snap_enabled;
+                        self.canvas = Canvas::default();
+                        self.canvas.snap_enabled = snap_enabled;
+                        self.dirty = true;
+                    }
+                }
                 ui.separator();
                 if ui
                     .add_enabled(
-                        !self.monitors.is_empty() && !self.config.views.is_empty(),
+                        !self.monitors.is_empty()
+                            && self
+                                .config
+                                .views
+                                .get(self.selected_view)
+                                .is_some_and(|view| {
+                                    !view.zones.is_empty()
+                                        && view.zones.iter().all(|zone| {
+                                            zone.application.is_some()
+                                                || !zone.command.trim().is_empty()
+                                        })
+                                }),
                         egui::Button::new("Launch selected view"),
                     )
                     .clicked()
                 {
                     self.run(self.selected_view);
                 }
-                ui.label(
-                    RichText::new("Commands run as your user. Use only commands you trust.")
-                        .small()
-                        .color(Color32::GRAY),
-                );
+                if self
+                    .config
+                    .views
+                    .get(self.selected_view)
+                    .is_some_and(|view| {
+                        view.zones.iter().any(|zone| {
+                            zone.application.is_none() && zone.command.trim().is_empty()
+                        })
+                    })
+                {
+                    ui.label(
+                        RichText::new("Choose an application for each zone to launch this view.")
+                            .small(),
+                    );
+                }
                 ui.separator();
-                ui.label(RichText::new("Linux / X11").small());
+                ui.label(RichText::new(self.backend.label()).small());
+                if self.backend == Backend::Gnome {
+                    ui.label(RichText::new("Requires the HerdCtrl GNOME extension.").small());
+                }
             });
         egui::TopBottomPanel::bottom("activity")
             .max_height(120.0)
@@ -282,25 +461,33 @@ impl eframe::App for Dashboard {
             ui.horizontal(|ui| {
                 ui.heading("Workspace canvas");
                 ui.toggle_value(&mut self.canvas.drawing, "Draw a zone");
+                ui.checkbox(&mut self.canvas.snap_enabled,"Snap zones")
+                    .on_hover_text("Dock to monitor edges, halves, thirds, quarters and neighbouring zones without overlap");
+                if ui.add_enabled(!view.zones.is_empty(),egui::Button::new("Align edges")).clicked() {
+                    self.dirty |= self.canvas.align(view);
+                }
             });
-            ui.label("Drag a zone to move it. Drag its bottom-right handle to resize.");
+            ui.label("Drag a zone within a monitor or onto another monitor. Drag its bottom-right handle to resize.");
+            let previous_zones = view.zones.len();
             self.dirty |= self
                 .canvas
                 .show(ui, &self.monitors, view, &mut self.selected_zone);
+            if canvas::has_overlaps(view) {
+                ui.colored_label(Color32::from_rgb(244,160,110),"Zones overlap. Use Align edges, or move and resize the highlighted zones.");
+            } else if let Some(feedback)=&self.canvas.feedback {ui.small(feedback);}
+            if view.zones.len() > previous_zones {
+                self.app_picker = Some(AppPicker::new(self.selected_view, view.zones.len() - 1));
+            }
             ui.add_space(10.0);
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    for (index, zone) in view.zones.iter().enumerate() {
-                        if ui
-                            .selectable_label(self.selected_zone == Some(index), &zone.name)
-                            .clicked()
-                        {
-                            self.selected_zone = Some(index);
-                        }
-                    }
-                });
+                self.dirty |= super::zone_list::show(
+                    ui, self.selected_view, &mut view.zones, &mut self.selected_zone,
+                );
                 if let Some(index) = self.selected_zone {
                     if let Some(zone) = view.zones.get_mut(index) {
+                        let is_terminal = zone.application.as_ref().is_some_and(|selected| {
+                            self.applications.iter().any(|app| app.application.id == selected.id && app.is_terminal)
+                        });
                         let mut delete = false;
                         egui::Grid::new("zone-properties")
                             .num_columns(2)
@@ -308,78 +495,126 @@ impl eframe::App for Dashboard {
                                 ui.label("Zone name");
                                 self.dirty |= ui.text_edit_singleline(&mut zone.name).changed();
                                 ui.end_row();
-                                ui.label("Command");
-                                self.dirty |= ui
-                                    .add(
-                                        egui::TextEdit::singleline(&mut zone.command)
-                                            .desired_width(420.0)
-                                            .hint_text("xterm -e htop"),
-                                    )
-                                    .changed();
+                                ui.label("Application");
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        zone.application
+                                            .as_ref()
+                                            .map(|app| app.name.as_str())
+                                            .unwrap_or(if zone.command.trim().is_empty() {
+                                                "No application selected"
+                                            } else {
+                                                "Custom command"
+                                            }),
+                                    );
+                                    if ui
+                                        .button(if zone.application.is_some() {
+                                            "Change…"
+                                        } else {
+                                            "Choose application…"
+                                        })
+                                        .clicked()
+                                    {
+                                        self.app_picker =
+                                            Some(AppPicker::new(self.selected_view, index));
+                                    }
+                                });
                                 ui.end_row();
+                                if is_terminal {
+                                    ui.label("Program in terminal");
+                                    self.dirty |= ui.add(egui::TextEdit::singleline(&mut zone.terminal_command)
+                                        .desired_width(420.0).hint_text("Optional, e.g. herdr or htop")).changed();
+                                    ui.end_row();
+                                }
                                 ui.label("Monitor");
                                 egui::ComboBox::from_id_salt("monitor")
-                                    .selected_text(&zone.monitor)
+                                    .selected_text(self.monitors.iter().enumerate().find(|(_,monitor)|monitor.name==zone.monitor)
+                                        .map(|(index,monitor)|monitor.display_name(index)).unwrap_or_else(||format!("Disconnected · {}",zone.monitor)))
                                     .show_ui(ui, |ui| {
-                                        for monitor in &self.monitors {
+                                        for (number,monitor) in self.monitors.iter().enumerate() {
                                             self.dirty |= ui
                                                 .selectable_value(
                                                     &mut zone.monitor,
                                                     monitor.name.clone(),
-                                                    &monitor.name,
+                                                    monitor.display_name(number),
                                                 )
                                                 .changed();
                                         }
                                     });
                                 ui.end_row();
-                                ui.label("Launch delay");
-                                self.dirty |= ui
-                                    .add(
-                                        egui::DragValue::new(&mut zone.delay_ms)
-                                            .range(0..=60_000)
-                                            .suffix(" ms"),
-                                    )
-                                    .changed();
-                                ui.end_row();
-                                ui.label("Zone");
-                                ui.horizontal(|ui| {
-                                    self.dirty |= ui
-                                        .add(
-                                            egui::DragValue::new(&mut zone.bounds.x)
-                                                .prefix("X ")
-                                                .speed(0.005)
-                                                .range(0.0..=1.0 - zone.bounds.width),
-                                        )
-                                        .changed();
-                                    self.dirty |= ui
-                                        .add(
-                                            egui::DragValue::new(&mut zone.bounds.y)
-                                                .prefix("Y ")
-                                                .speed(0.005)
-                                                .range(0.0..=1.0 - zone.bounds.height),
-                                        )
-                                        .changed();
-                                    self.dirty |= ui
-                                        .add(
-                                            egui::DragValue::new(&mut zone.bounds.width)
-                                                .prefix("W ")
-                                                .speed(0.005)
-                                                .range(0.001..=1.0 - zone.bounds.x),
-                                        )
-                                        .changed();
-                                    self.dirty |= ui
-                                        .add(
-                                            egui::DragValue::new(&mut zone.bounds.height)
-                                                .prefix("H ")
-                                                .speed(0.005)
-                                                .range(0.001..=1.0 - zone.bounds.y),
-                                        )
-                                        .changed();
-                                });
-                                ui.end_row();
                                 ui.label("");
                                 delete = ui.button("Delete zone").clicked();
                                 ui.end_row();
+                            });
+                        egui::CollapsingHeader::new("Advanced")
+                            .id_salt((self.selected_view, index, "advanced"))
+                            .show(ui, |ui| {
+                                egui::Grid::new("advanced-properties").num_columns(2).show(
+                                    ui,
+                                    |ui| {
+                                        ui.label("Custom command");
+                                        if ui.add(egui::TextEdit::singleline(&mut zone.command)
+                                        .desired_width(420.0)
+                                        .hint_text("Optional: replace the selected application"))
+                                        .changed() {
+                                        if zone.application.is_some() { zone.run_in_terminal = is_terminal; }
+                                        zone.application = None;
+                                        zone.terminal_command.clear();
+                                        self.dirty = true;
+                                    }
+                                        ui.end_row();
+                                        if zone.application.is_none() {
+                                            ui.label("");
+                                            self.dirty |= ui.checkbox(&mut zone.run_in_terminal, "Run in terminal").changed();
+                                            ui.end_row();
+                                        }
+                                        ui.label("Launch delay");
+                                        self.dirty |= ui
+                                            .add(
+                                                egui::DragValue::new(&mut zone.delay_ms)
+                                                    .range(0..=60_000)
+                                                    .suffix(" ms"),
+                                            )
+                                            .changed();
+                                        ui.end_row();
+                                        ui.label("Zone");
+                                        ui.horizontal(|ui| {
+                                            self.dirty |= ui
+                                                .add(
+                                                    egui::DragValue::new(&mut zone.bounds.x)
+                                                        .prefix("X ")
+                                                        .speed(0.005)
+                                                        .range(0.0..=1.0 - zone.bounds.width),
+                                                )
+                                                .changed();
+                                            self.dirty |= ui
+                                                .add(
+                                                    egui::DragValue::new(&mut zone.bounds.y)
+                                                        .prefix("Y ")
+                                                        .speed(0.005)
+                                                        .range(0.0..=1.0 - zone.bounds.height),
+                                                )
+                                                .changed();
+                                            self.dirty |= ui
+                                                .add(
+                                                    egui::DragValue::new(&mut zone.bounds.width)
+                                                        .prefix("W ")
+                                                        .speed(0.005)
+                                                        .range(0.001..=1.0 - zone.bounds.x),
+                                                )
+                                                .changed();
+                                            self.dirty |= ui
+                                                .add(
+                                                    egui::DragValue::new(&mut zone.bounds.height)
+                                                        .prefix("H ")
+                                                        .speed(0.005)
+                                                        .range(0.001..=1.0 - zone.bounds.y),
+                                                )
+                                                .changed();
+                                        });
+                                        ui.end_row();
+                                    },
+                                );
                             });
                         if delete {
                             view.zones.remove(index);
@@ -400,7 +635,11 @@ impl eframe::App for Dashboard {
                         let _ = manager.unregister(key);
                     }
                 }
+                if let Some(hotkeys) = &mut self.gnome_hotkeys {
+                    hotkeys.configure(&[]);
+                }
             }
         });
+        self.show_app_picker(ctx);
     }
 }

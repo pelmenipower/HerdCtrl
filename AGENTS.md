@@ -7,6 +7,7 @@
 - Bei Widersprüchen, fehlenden Vorgaben oder technisch unerreichbaren Anforderungen die Abweichung ausdrücklich klären; Anforderungen nicht stillschweigend ändern. Explizite Benutzeranweisungen haben Vorrang.
 - `PRD.md` nicht beiläufig umschreiben, um eine Implementierung nachträglich passend zu machen. Produktänderungen nur auf ausdrücklichen Auftrag dokumentieren.
 - Rust mit `egui`/`eframe` verwenden. Initiale Zielplattform: Ubuntu unter X11. Keine Electron- oder Web-Runtime einführen.
+- GNOME 50 unter Wayland gemäß PRD 4.6 unterstützen; die mitgelieferte Shell-Erweiterung ist die Schnittstelle zum Compositor. Andere Wayland-Compositoren nicht stillschweigend als unterstützt behandeln.
 - Laufzeitziele (Binärgröße, Startzeit, Speicher) messen und Ergebnisse dokumentieren; ungemessene Ziele nicht als erfüllt ausgeben.
 
 ## Git und Veröffentlichungen

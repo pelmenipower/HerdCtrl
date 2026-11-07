@@ -2,7 +2,8 @@
 
 **Project Name:** HerdCtrl  
 **Version:** 1.0 (Specification)  
-**Target OS (Initial):** Ubuntu (Linux / X11)  
+**Target OS:** Ubuntu (Linux / X11), plus GNOME 50 on Wayland via the HerdCtrl Shell extension
+
 **Tech Stack:** Rust (`egui` / `eframe`, `serde_json`, `wmctrl` / X11 API bindings)
 
 ---
@@ -62,6 +63,18 @@ Upon triggering a View:
 
 ---
 
+### 4.6. GNOME / Wayland support (user-approved scope extension)
+
+* Support the current Ubuntu GNOME 50 Wayland desktop through a bundled, separately enabled GNOME Shell extension. Keep the Rust application and X11 backend; no Electron or Node.js runtime is required.
+* The extension exposes a versioned session D-Bus bridge for logical monitor geometry, connector names and scaling, process-associated windows, window movement/resizing, and global shortcuts. Both native Wayland and XWayland application windows are eligible.
+* Use compositor logical coordinates consistently for the canvas and placement; do not multiply them by monitor scale again. Existing percentage-based layouts remain compatible.
+* The Rust UI may run via XWayland. This does not limit the compositor bridge to X11 windows.
+* Missing/disabled extensions, shortcut conflicts, disconnected monitors and unsupported Wayland compositors must produce actionable messages. Never silently route Wayland window control through `wmctrl`.
+* Keep bridge calls and shortcut polling outside the UI thread, bound helper calls with timeouts, release shortcut grabs on disable and after an expired application heartbeat, and do not move unrelated windows.
+* Provide repeatable bridge/protocol tests and extension installation instructions. Real GNOME desktop acceptance remains distinct from simulated tests. Support for other GNOME versions requires explicit compatibility verification.
+
+---
+
 ## 5. System Architecture & File Structure
 
 ```text
@@ -100,5 +113,5 @@ herdctrl/
 
 * macOS support via Accessibility API (`AXUIElement`).
 * Windows support via Win32 API (`SetWindowPos`).
-* Native Wayland Compositor IPC integrations (e.g., Hyprland / KDE Plasma IPC).
+* Additional Wayland compositor integrations (e.g., Hyprland / KDE Plasma IPC); GNOME 50 is covered by section 4.6.
 * Tray Icon / Minimization to system notification area.

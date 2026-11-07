@@ -11,14 +11,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxkbcommon-dev libgl1-mesa-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev xvfb xauth openbox wmctrl x11-xserver-utils xdotool xterm gjs dbus
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy && rustup default stable
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      - name: GNOME bridge protocol and extension bundle
+        run: |
+          node scripts/gnome-controller.test.mjs
+          node --input-type=module --check < gnome-extension/herdctrl@herdctrl.local/extension.js
+          bash -n scripts/install-gnome-extension.sh
+          python3 scripts/package-gnome-extension.py
+      - name: Rust to GJS protocol roundtrip on an isolated bus (simulated compositor)
+        run: |
+          dbus-run-session -- bash -euc '
+            gjs -m scripts/mock-gnome-bridge.mjs > /tmp/herdctrl-mock-gnome.log 2>&1 &
+            bridge_pid=$!
+            trap "kill $bridge_pid 2>/dev/null || true" EXIT
+            for attempt in {1..50}; do
+              if gdbus introspect --session --dest org.gnome.Shell --object-path /org/gnome/Shell/Extensions/HerdCtrl >/dev/null 2>&1; then break; fi
+              sleep 0.1
+            done
+            HERDCTRL_MOCK_GNOME_BRIDGE=1 cargo test --locked gnome_mock_dbus_roundtrip -- --ignored --nocapture
+          '
       - run: cargo build --release --locked
+      - name: X11 integration with a virtual display and Openbox
+        run: |
+          xvfb-run -a -s '-screen 0 1920x1080x24' bash -euc '
+            export XDG_SESSION_TYPE=x11
+            openbox --sm-disable > /tmp/herdctrl-openbox.log 2>&1 &
+            wm_pid=$!
+            trap "kill $wm_pid 2>/dev/null || true" EXIT
+            for attempt in {1..50}; do
+              if wmctrl -m >/dev/null 2>&1; then break; fi
+              sleep 0.1
+            done
+            wmctrl -m
+            cargo test --locked x11_ -- --ignored --test-threads=1 --nocapture
+            python3 scripts/check-x11.py --runs 3 --output x11-acceptance.json
+          '
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: herdctrl-x11-acceptance
+          path: |
+            x11-acceptance.json
+            /tmp/herdctrl-openbox.log
       - uses: actions/upload-artifact@v4
         with:
           name: herdctrl-linux-x86_64
           path: target/release/herdctrl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: herdctrl-gnome-extension
+          path: target/herdctrl@herdctrl.local.shell-extension.zip

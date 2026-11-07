@@ -80,7 +80,7 @@ fn geometry(value: &str) -> Option<(u32, u32, i32, i32)> {
     ))
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, serde::Deserialize)]
 pub struct Window {
     pub id: String,
     pub pid: u32,

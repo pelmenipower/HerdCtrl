@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>HerdCtrl — arranged workspace</title>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#12191f"/>
+  <rect x="39" y="49" width="178" height="132" rx="16" fill="#1d2831" stroke="#67ddb1" stroke-width="10"/>
+  <rect x="56" y="66" width="63" height="98" rx="7" fill="#67ddb1"/>
+  <rect x="131" y="66" width="69" height="43" rx="7" fill="#629dbb"/>
+  <rect x="131" y="121" width="69" height="43" rx="7" fill="#629dbb"/>
+  <path d="M128 185v23m-32 0h64" fill="none" stroke="#67ddb1" stroke-width="10" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=HerdCtrl
+Comment=Visual workspace and window layout launcher
+Exec=herdctrl
+Icon=herdctrl
+Terminal=false
+Categories=Utility;Development;
+StartupNotify=true
