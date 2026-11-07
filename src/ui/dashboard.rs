@@ -46,6 +46,7 @@ pub struct Dashboard {
     app_picker: Option<AppPicker>,
     identification: Identification,
     identify_return_focus: bool,
+    confirm_delete: Option<usize>,
 }
 
 impl Dashboard {
@@ -98,6 +99,7 @@ impl Dashboard {
             app_picker: None,
             identification: Identification::default(),
             identify_return_focus: false,
+            confirm_delete: None,
         };
         app.refresh();
         app.register_hotkeys();
@@ -183,6 +185,50 @@ impl Dashboard {
         }
     }
 
+    fn delete_view(&mut self, index: usize) {
+        if index >= self.config.views.len() {
+            return;
+        }
+        self.config.views.remove(index);
+        self.selected_view = selection_after_removal(index, self.config.views.len());
+        self.selected_zone = self
+            .config
+            .views
+            .get(self.selected_view)
+            .and_then(|view| (!view.zones.is_empty()).then_some(0));
+        self.app_picker = None;
+        reset_canvas(&mut self.canvas);
+        self.dirty = true;
+        // Indices changed, so every remaining view needs its hotkey bound to its new index.
+        self.register_hotkeys();
+    }
+
+    fn show_delete_view_dialog(&mut self, ctx: &egui::Context) {
+        let Some(index) = self.confirm_delete else {
+            return;
+        };
+        let Some(name) = self.config.views.get(index).map(|view| view.name.clone()) else {
+            self.confirm_delete = None;
+            return;
+        };
+        let mut confirmed = false;
+        let mut cancelled = false;
+        let response = egui::Modal::new(egui::Id::new("delete-view-dialog")).show(ctx, |ui| {
+            ui.heading(format!("Delete view “{name}”?"));
+            ui.label("Its zones and hotkey will be removed when you save.");
+            ui.horizontal(|ui| {
+                confirmed = ui.button("Delete view").clicked();
+                cancelled = ui.button("Cancel").clicked();
+            });
+        });
+        if confirmed {
+            self.confirm_delete = None;
+            self.delete_view(index);
+        } else if cancelled || response.should_close() {
+            self.confirm_delete = None;
+        }
+    }
+
     fn run(&self, index: usize) {
         if let Some(view) = self.config.views.get(index) {
             launcher::launch(view.clone(), self.events.clone());
@@ -208,6 +254,22 @@ impl Dashboard {
             Err(e) => self.log.push(format!("Save failed: {e}")),
         }
     }
+}
+
+/// Index of the view to select after removing the view at `removed`: the previous view, or 0.
+fn selection_after_removal(removed: usize, remaining: usize) -> usize {
+    if remaining == 0 {
+        0
+    } else {
+        removed.saturating_sub(1).min(remaining - 1)
+    }
+}
+
+/// Drops in-progress canvas state but keeps the user's snapping preference.
+fn reset_canvas(canvas: &mut Canvas) {
+    let snap_enabled = canvas.snap_enabled;
+    *canvas = Canvas::default();
+    canvas.snap_enabled = snap_enabled;
 }
 
 impl eframe::App for Dashboard {
@@ -376,9 +438,7 @@ impl eframe::App for Dashboard {
                         self.selected_view = index;
                         self.selected_zone = (!self.config.views[index].zones.is_empty()).then_some(0);
                         self.app_picker = None;
-                        let snap_enabled = self.canvas.snap_enabled;
-                        self.canvas = Canvas::default();
-                        self.canvas.snap_enabled = snap_enabled;
+                        reset_canvas(&mut self.canvas);
                         self.dirty = true;
                     }
                 }
@@ -446,7 +506,7 @@ impl eframe::App for Dashboard {
                 );
                 return;
             };
-            let mut delete_view = false;
+            let mut request_delete = false;
             ui.horizontal(|ui| {
                 self.dirty |= ui.text_edit_singleline(&mut view.name).changed();
                 ui.label("Hotkey");
@@ -457,7 +517,7 @@ impl eframe::App for Dashboard {
                             .desired_width(175.0),
                     )
                     .changed();
-                delete_view = ui.button("Delete view").clicked();
+                request_delete = ui.button("Delete view").clicked();
             });
             ui.horizontal(|ui| {
                 ui.heading("Workspace canvas");
@@ -502,26 +562,37 @@ impl eframe::App for Dashboard {
                             view.zones.remove(index);
                             self.selected_zone = None;
                             self.dirty = true;
+                            if self
+                                .app_picker
+                                .as_ref()
+                                .is_some_and(|picker| picker.view == self.selected_view)
+                            {
+                                self.app_picker = None;
+                            }
+                            reset_canvas(&mut self.canvas);
                         }
                     }
                 }
             });
-            if delete_view {
-                self.config.views.remove(self.selected_view);
-                self.selected_view = 0;
-                self.selected_zone = None;
-                self.dirty = true;
-                // Indices changed; never allow old hotkeys to trigger a different view.
-                if let Some(manager) = &self.hotkeys {
-                    for (key, _) in self.bindings.drain(..) {
-                        let _ = manager.unregister(key);
-                    }
-                }
-                if let Some(hotkeys) = &mut self.gnome_hotkeys {
-                    hotkeys.configure(&[]);
-                }
+            if request_delete {
+                self.confirm_delete = Some(self.selected_view);
             }
         });
+        self.show_delete_view_dialog(ctx);
         self.show_app_picker(ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selection_after_removal;
+
+    #[test]
+    fn selects_previous_view_after_removal() {
+        assert_eq!(selection_after_removal(0, 0), 0);
+        assert_eq!(selection_after_removal(0, 3), 0);
+        assert_eq!(selection_after_removal(1, 1), 0);
+        assert_eq!(selection_after_removal(2, 3), 1);
+        assert_eq!(selection_after_removal(3, 3), 2);
     }
 }
