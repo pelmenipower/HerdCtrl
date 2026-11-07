@@ -220,12 +220,17 @@ fn launch_new(
             .any(|window| matcher.owns_pid(window.pid)),
         _ => false,
     };
+    // Set when the app is running but offers no New Window action, so no second window can open.
+    let mut single_instance = None;
     let mut command = if let Some(app) = app {
         if !script.trim().is_empty() {
             app.terminal_command(script)?
         } else if let Some(command) = app_running.then(|| app.new_window_command()).flatten() {
             command
         } else {
+            if app_running {
+                single_instance = Some(app.application.name.as_str());
+            }
             app.command()
         }
     } else if !zone.command.trim().is_empty() {
@@ -306,6 +311,9 @@ fn launch_new(
             }
         }
         if Instant::now() >= deadline {
+            if let Some(name) = single_instance {
+                return Err(format!("{name} is already running and its desktop entry offers no New Window action, so no second window opened. Open another window manually, then launch the view again."));
+            }
             return Err("No new window belonging to this process appeared within 5 s. Select a terminal application for terminal programs.".into());
         }
         thread::sleep(Duration::from_millis(80));
