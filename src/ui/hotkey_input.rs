@@ -7,6 +7,16 @@ pub struct Recorder {
     recording: bool,
     /// Modifier toggles kept while no key is chosen, because such a hotkey stores no text.
     modifiers: Modifiers,
+    /// The last key press could not be stored, so recording continues with a hint.
+    unsupported: bool,
+}
+
+/// What a single key press does while recording.
+#[derive(Debug, PartialEq)]
+enum Press {
+    Cancel,
+    Capture(&'static str),
+    Unsupported,
 }
 
 /// Modifier toggles in the order they are written to the stored hotkey string.
@@ -38,6 +48,11 @@ pub fn show(ui: &mut egui::Ui, recorder: &mut Recorder, hotkey: &mut String) -> 
     };
 
     // Handle key presses before drawing buttons so the press that starts recording is not reused.
+    // A focused text field owns the keyboard, so recording stops instead of stealing its keys.
+    if recorder.recording && ui.ctx().wants_keyboard_input() {
+        recorder.recording = false;
+        recorder.unsupported = false;
+    }
     if recorder.recording {
         let presses: Vec<Key> = ui.input(|input| {
             input
@@ -52,14 +67,19 @@ pub fn show(ui: &mut egui::Ui, recorder: &mut Recorder, hotkey: &mut String) -> 
                 .collect()
         });
         for pressed in presses {
-            if pressed == Key::Escape {
-                recorder.recording = false;
-                break;
-            }
-            if let Some(code) = key_code(pressed) {
-                key = Some(code.to_string());
-                recorder.recording = false;
-                break;
+            match press_outcome(pressed) {
+                Press::Cancel => {
+                    recorder.recording = false;
+                    recorder.unsupported = false;
+                    break;
+                }
+                Press::Capture(code) => {
+                    key = Some(code.to_string());
+                    recorder.recording = false;
+                    recorder.unsupported = false;
+                    break;
+                }
+                Press::Unsupported => recorder.unsupported = true,
             }
         }
     }
@@ -83,6 +103,12 @@ pub fn show(ui: &mut egui::Ui, recorder: &mut Recorder, hotkey: &mut String) -> 
         if ui.button("Clear").clicked() {
             clear = true;
         }
+        if recorder.recording && recorder.unsupported {
+            ui.colored_label(
+                Color32::from_rgb(244, 160, 110),
+                "Key not supported, press another key",
+            );
+        }
         if key.is_some() && modifiers.is_empty() {
             ui.colored_label(
                 Color32::from_rgb(244, 160, 110),
@@ -93,6 +119,7 @@ pub fn show(ui: &mut egui::Ui, recorder: &mut Recorder, hotkey: &mut String) -> 
 
     if clear {
         recorder.recording = false;
+        recorder.unsupported = false;
         modifiers = Modifiers::empty();
         key = None;
     }
@@ -180,6 +207,14 @@ fn key_label(code: &str) -> String {
         .or_else(|| code.strip_prefix("Digit"))
         .unwrap_or(code)
         .to_string()
+}
+
+/// Escape cancels recording; other keys are captured when they have a `global_hotkey` code.
+fn press_outcome(key: Key) -> Press {
+    if key == Key::Escape {
+        return Press::Cancel;
+    }
+    key_code(key).map_or(Press::Unsupported, Press::Capture)
 }
 
 /// The `global_hotkey` code name for an egui key, or None when the key cannot be a hotkey.
@@ -331,6 +366,18 @@ mod tests {
         assert!(!has_modifier("Super"));
         assert!(!has_modifier("NotAKey"));
         assert!(!has_modifier(""));
+    }
+
+    #[test]
+    fn press_outcome_cancels_captures_or_flags_unsupported_keys() {
+        assert_eq!(press_outcome(Key::Escape), Press::Cancel);
+        assert_eq!(press_outcome(Key::D), Press::Capture("KeyD"));
+        let unmapped = Key::ALL
+            .iter()
+            .copied()
+            .find(|key| *key != Key::Escape && key_code(*key).is_none())
+            .expect("egui has keys without a hotkey code");
+        assert_eq!(press_outcome(unmapped), Press::Unsupported);
     }
 
     #[test]
