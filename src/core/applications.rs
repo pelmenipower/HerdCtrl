@@ -14,12 +14,23 @@ pub struct InstalledApp {
     pub desktop_file: PathBuf,
     pub is_terminal: bool,
     pub terminal_exec: Option<Vec<String>>,
+    pub new_window_argv: Option<Vec<String>>,
 }
 
 impl InstalledApp {
     pub fn command(&self) -> Command {
-        let mut command = Command::new(&self.argv[0]);
-        command.args(&self.argv[1..]);
+        self.command_for(&self.argv)
+    }
+
+    pub fn new_window_command(&self) -> Option<Command> {
+        self.new_window_argv
+            .as_deref()
+            .map(|argv| self.command_for(argv))
+    }
+
+    fn command_for(&self, argv: &[String]) -> Command {
+        let mut command = Command::new(&argv[0]);
+        command.args(&argv[1..]);
         command.env("GIO_LAUNCHED_DESKTOP_FILE", &self.desktop_file);
         command.env_remove("HERDCTRL_TERMINAL_COMMAND");
         if let Some(directory) = &self.directory {
@@ -177,14 +188,8 @@ pub fn default_terminal(apps: &[InstalledApp]) -> Result<InstalledApp, String> {
         })
 }
 
-fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, String> {
-    let name = entry
-        .name(locales)
-        .filter(|s| !s.trim().is_empty())
-        .ok_or("Missing application name")?
-        .into_owned();
-    let tokens = shlex::split(entry.exec().ok_or("Missing executable")?)
-        .ok_or("Invalid executable quoting")?;
+fn expand_exec(exec: &str, entry: &DesktopEntry, name: &str) -> Result<Vec<String>, String> {
+    let tokens = shlex::split(exec).ok_or("Invalid executable quoting")?;
     let mut argv = Vec::new();
     for token in tokens {
         if token == "%i" {
@@ -205,13 +210,41 @@ fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, Str
             }
             match chars.next() {
                 Some('%') => expanded.push('%'),
-                Some('c') => expanded.push_str(&name),
+                Some('c') => expanded.push_str(name),
                 Some('k') => expanded.push_str(&entry.path.to_string_lossy()),
                 _ => return Err("Unsupported desktop field code".into()),
             }
         }
         argv.push(expanded);
     }
+    Ok(argv)
+}
+
+fn new_window_argv(entry: &DesktopEntry, name: &str) -> Option<Vec<String>> {
+    let action = entry.actions()?.into_iter().find(|id| {
+        let id: String = id
+            .to_lowercase()
+            .chars()
+            .filter(|c| !matches!(c, '-' | '_'))
+            .collect();
+        ["newwindow", "newemptywindow", "windownew"].contains(&id.as_str())
+    })?;
+    let argv = expand_exec(entry.action_exec(action)?, entry, name).ok()?;
+    argv.first()
+        .is_some_and(|program| executable(program))
+        .then_some(argv)
+}
+
+fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, String> {
+    let name = entry
+        .name(locales)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("Missing application name")?
+        .into_owned();
+    let is_terminal = entry
+        .categories()
+        .is_some_and(|items| items.contains(&"TerminalEmulator"));
+    let mut argv = expand_exec(entry.exec().ok_or("Missing executable")?, entry, &name)?;
     let program = argv
         .first()
         .filter(|s| !s.is_empty() && !s.contains('='))
@@ -225,6 +258,11 @@ fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, Str
     {
         argv.push("--standalone".into());
     }
+    let new_window_argv = if is_terminal || entry.terminal() {
+        None
+    } else {
+        new_window_argv(entry, &name)
+    };
     if entry.terminal() {
         if !executable("xdg-terminal-exec") {
             return Err("No default terminal launcher is available".into());
@@ -243,13 +281,12 @@ fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, Str
         argv,
         directory: entry.path().filter(|p| !p.is_empty()).map(PathBuf::from),
         desktop_file: entry.path.clone(),
-        is_terminal: entry
-            .categories()
-            .is_some_and(|items| items.contains(&"TerminalEmulator")),
+        is_terminal,
         terminal_exec: entry
             .desktop_entry("X-TerminalArgExec")
             .or_else(|| entry.desktop_entry("X-ExecArg"))
             .and_then(shlex::split),
+        new_window_argv,
     })
 }
 
@@ -288,6 +325,26 @@ mod tests {
             &[]
         )
         .is_err());
+    }
+
+    #[test]
+    fn new_window_action_skips_private_actions() {
+        let app = prepare(&entry("files", "[Desktop Entry]\nType=Application\nName=Files\nExec=/bin/echo %U\nActions=new-window;new-private-window;\n\n[Desktop Action new-window]\nName=New Window\nExec=/bin/echo --new-window %u\n\n[Desktop Action new-private-window]\nName=New Private\nExec=/bin/echo --private-window\n"), &[]).unwrap();
+        assert_eq!(
+            app.new_window_argv,
+            Some(vec!["/bin/echo".into(), "--new-window".into()])
+        );
+        let private = prepare(&entry("private", "[Desktop Entry]\nType=Application\nName=Private\nExec=/bin/echo\nActions=new-private-window;\n\n[Desktop Action new-private-window]\nName=New Private\nExec=/bin/echo --private-window\n"), &[]).unwrap();
+        assert_eq!(private.new_window_argv, None);
+        let plain = prepare(
+            &entry(
+                "plain",
+                "[Desktop Entry]\nType=Application\nName=Plain\nExec=/bin/echo\n",
+            ),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(plain.new_window_argv, None);
     }
 
     #[test]

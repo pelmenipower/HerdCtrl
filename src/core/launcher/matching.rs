@@ -193,6 +193,7 @@ mod tests {
             desktop_file: "/does/not/exist.desktop".into(),
             is_terminal: false,
             terminal_exec: None,
+            new_window_argv: None,
         };
         let mut matcher = AppMatcher::new(&app, "");
         assert!(matcher.owns(&ProcessIdentity {
@@ -252,6 +253,7 @@ mod tests {
             desktop_file: "/does/not/exist.desktop".into(),
             is_terminal: true,
             terminal_exec: Some(vec!["--".into()]),
+            new_window_argv: None,
         };
         let window = Window {
             id: "1".into(),

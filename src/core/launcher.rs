@@ -93,6 +93,9 @@ pub fn launch(view: View, events: Sender<String>) {
                 let matcher = selected_app
                     .as_ref()
                     .map(|app| matching::AppMatcher::new(app, script));
+                let app_running = matcher.as_ref().is_some_and(|matcher| {
+                    windows.iter().any(|window| matcher.owns_pid(window.pid))
+                });
                 let reused = matcher.as_ref().and_then(|matcher| {
                     let mut claimed = claimed.lock().unwrap_or_else(|error| error.into_inner());
                     matching::reserve(
@@ -115,6 +118,7 @@ pub fn launch(view: View, events: Sender<String>) {
                     } else {
                         launch_new(
                             index,
+                            app_running,
                             &zone,
                             selected_app.as_ref(),
                             matcher.as_ref(),
@@ -141,6 +145,7 @@ pub fn launch(view: View, events: Sender<String>) {
 #[allow(clippy::too_many_arguments)]
 fn launch_new(
     index: usize,
+    app_running: bool,
     zone: &super::config::Zone,
     app: Option<&applications::InstalledApp>,
     matcher: Option<&matching::AppMatcher>,
@@ -158,6 +163,8 @@ fn launch_new(
     let mut command = if let Some(app) = app {
         if !script.trim().is_empty() {
             app.terminal_command(script)?
+        } else if let Some(command) = app_running.then(|| app.new_window_command()).flatten() {
+            command
         } else {
             app.command()
         }
