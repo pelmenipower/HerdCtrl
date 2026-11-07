@@ -52,18 +52,15 @@ pub fn launch(view: View, events: Sender<String>) {
             .iter()
             .map(|zone| select_app(zone, &apps))
             .collect();
-        let app_locks: HashMap<String, std::sync::Mutex<()>> =
-            app_lock_keys(view.zones.iter().zip(&selections).map(|(zone, selection)| {
-                let id = selection
-                    .as_ref()
-                    .ok()
-                    .and_then(|app| app.as_ref())
-                    .map(|app| app.application.id.as_str());
-                (id, script(zone))
-            }))
-            .into_iter()
-            .map(|key| (key, std::sync::Mutex::new(())))
-            .collect();
+        let app_locks: HashMap<String, std::sync::Mutex<()>> = app_lock_keys(
+            selections
+                .iter()
+                .map(|selection| selection.as_ref().ok()?.as_ref())
+                .map(|app| app.map(|app| app.application.id.as_str())),
+        )
+        .into_iter()
+        .map(|key| (key, std::sync::Mutex::new(())))
+        .collect();
         let run = Run {
             backend,
             initial: &initial,
@@ -115,7 +112,6 @@ pub fn launch(view: View, events: Sender<String>) {
                 });
                 let app_lock = selected_app
                     .as_ref()
-                    .filter(|_| script.trim().is_empty())
                     .and_then(|app| app_locks.get(&app.application.id));
                 let events = events.clone();
                 scope.spawn(move || {
@@ -200,15 +196,10 @@ fn select_app(
     }
 }
 
-/// Application ids whose fresh launches (no custom terminal script) must not overlap.
-fn app_lock_keys<'a>(
-    launches: impl IntoIterator<Item = (Option<&'a str>, &'a str)>,
-) -> HashSet<String> {
-    launches
-        .into_iter()
-        .filter(|(_, script)| script.trim().is_empty())
-        .filter_map(|(app, _)| app.map(str::to_string))
-        .collect()
+/// Application ids whose launches must not overlap. Terminal servers can open every window of
+/// all their zones inside one process, so script zones need the same lock as plain ones.
+fn app_lock_keys<'a>(apps: impl IntoIterator<Item = Option<&'a str>>) -> HashSet<String> {
+    apps.into_iter().flatten().map(str::to_string).collect()
 }
 
 fn launch_new(
@@ -284,14 +275,22 @@ fn launch_new(
                 .filter(|(zone, _)| **zone != index)
                 .map(|(_, root)| *root)
                 .collect();
+            let mut windows_per_pid: HashMap<u32, usize> = HashMap::new();
+            for window in &windows {
+                *windows_per_pid.entry(window.pid).or_default() += 1;
+            }
             let weak = |window: &linux::Window| {
                 matcher.is_some_and(|matcher| matcher.owns_pid(window.pid))
                     && !linux::has_ancestor(window.pid, &other_roots)
-                    && (script.trim().is_empty()
-                        || matching::ProcessIdentity::read(window.pid)
+                    && script_matches(
+                        matching::ProcessIdentity::read(window.pid)
                             .terminal_command
-                            .as_deref()
-                            == Some(script))
+                            .as_deref(),
+                        script,
+                        windows_per_pid
+                            .get(&window.pid)
+                            .is_some_and(|count| *count > 1),
+                    )
             };
             let window = pick(windows, run.initial, &pids, weak, &mut claimed);
             drop(claimed);
@@ -311,6 +310,12 @@ fn launch_new(
         }
         thread::sleep(Duration::from_millis(80));
     }
+}
+
+/// Whether a fresh window of the app may be this zone's window. A window of a shared server
+/// process cannot carry its own terminal marker, so the app lock is what keeps it unambiguous.
+fn script_matches(marker: Option<&str>, script: &str, shared_process: bool) -> bool {
+    script.trim().is_empty() || shared_process || marker == Some(script)
 }
 
 fn pick(
@@ -345,15 +350,27 @@ mod tests {
     }
 
     #[test]
-    fn only_plain_same_app_launches_share_a_lock_key() {
-        let keys = app_lock_keys([
-            (Some("a"), ""),
-            (Some("a"), " "),
-            (Some("b"), "htop"),
-            (None, ""),
-            (Some("c"), ""),
-        ]);
-        assert_eq!(keys, HashSet::from(["a".to_string(), "c".to_string()]));
+    fn every_selected_app_gets_a_lock_key() {
+        let keys = app_lock_keys([Some("a"), Some("a"), Some("b"), None, Some("c")]);
+        assert_eq!(
+            keys,
+            HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+    }
+
+    #[test]
+    fn script_matches_marker_or_shared_process() {
+        // Empty scripts never need a marker.
+        assert!(script_matches(None, "", false));
+        assert!(script_matches(Some("htop"), " ", false));
+        // A matching marker always passes.
+        assert!(script_matches(Some("htop"), "htop", false));
+        // Without a marker or a shared process the window is rejected.
+        assert!(!script_matches(None, "htop", false));
+        assert!(!script_matches(Some("top"), "htop", false));
+        // A shared server process cannot identify its window, so the serialized launch decides.
+        assert!(script_matches(None, "htop", true));
+        assert!(script_matches(Some("top"), "htop", true));
     }
 
     #[test]
