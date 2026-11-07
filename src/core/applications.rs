@@ -14,12 +14,23 @@ pub struct InstalledApp {
     pub desktop_file: PathBuf,
     pub is_terminal: bool,
     pub terminal_exec: Option<Vec<String>>,
+    pub new_window_argv: Option<Vec<String>>,
 }
 
 impl InstalledApp {
     pub fn command(&self) -> Command {
-        let mut command = Command::new(&self.argv[0]);
-        command.args(&self.argv[1..]);
+        self.command_for(&self.argv)
+    }
+
+    pub fn new_window_command(&self) -> Option<Command> {
+        self.new_window_argv
+            .as_deref()
+            .map(|argv| self.command_for(argv))
+    }
+
+    fn command_for(&self, argv: &[String]) -> Command {
+        let mut command = Command::new(&argv[0]);
+        command.args(&argv[1..]);
         command.env("GIO_LAUNCHED_DESKTOP_FILE", &self.desktop_file);
         command.env_remove("HERDCTRL_TERMINAL_COMMAND");
         if let Some(directory) = &self.directory {
@@ -155,36 +166,64 @@ fn executable(program: &str) -> bool {
 }
 
 pub fn default_terminal(apps: &[InstalledApp]) -> Result<InstalledApp, String> {
-    if let Ok(id) = crate::os::linux::output("xdg-terminal-exec", &["--print-id"]) {
-        let id = id
-            .trim()
-            .split(':')
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches(".desktop");
-        if let Some(app) = apps
-            .iter()
-            .find(|app| app.application.id == id && app.is_terminal)
-        {
-            return Ok(app.clone());
-        }
-    }
-    apps.iter()
-        .find(|app| app.application.id == "org.gnome.Ptyxis" && app.is_terminal)
+    let xdg_id = crate::os::linux::output("xdg-terminal-exec", &["--print-id"])
+        .ok()
+        .map(|id| {
+            id.trim()
+                .split(':')
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches(".desktop")
+                .to_string()
+        });
+    choose_terminal(apps, xdg_id.as_deref())
         .cloned()
         .ok_or_else(|| {
             "No default terminal is available. Choose a terminal application for this zone.".into()
         })
 }
 
-fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, String> {
-    let name = entry
-        .name(locales)
-        .filter(|s| !s.trim().is_empty())
-        .ok_or("Missing application name")?
-        .into_owned();
-    let tokens = shlex::split(entry.exec().ok_or("Missing executable")?)
-        .ok_or("Invalid executable quoting")?;
+const PREFERRED_TERMINALS: [&str; 9] = [
+    "org.gnome.Ptyxis",
+    "org.gnome.Terminal",
+    "org.gnome.Console",
+    "com.mitchellh.ghostty",
+    "org.kde.konsole",
+    "Alacritty",
+    "kitty",
+    "org.wezfurlong.wezterm",
+    "foot",
+];
+
+fn choose_terminal<'a>(apps: &'a [InstalledApp], xdg_id: Option<&str>) -> Option<&'a InstalledApp> {
+    let usable = |app: &&InstalledApp| app.is_terminal && app.terminal_exec.is_some();
+    let by_id = |id: &str| {
+        apps.iter()
+            .filter(usable)
+            .find(|app| app.application.id == id)
+    };
+    xdg_id
+        .and_then(by_id)
+        .or_else(|| PREFERRED_TERMINALS.iter().find_map(|id| by_id(id)))
+        .or_else(|| apps.iter().find(usable))
+}
+
+/// Terminals without X-TerminalArgExec/X-ExecArg, keyed by executable basename.
+fn known_exec_arg(program: &str) -> Option<Vec<String>> {
+    let name = std::path::Path::new(program).file_name()?.to_str()?;
+    let args: &[&str] = match name {
+        "ptyxis" | "gnome-terminal" | "kgx" => &["--"],
+        "konsole" | "xterm" | "alacritty" | "tilix" | "ghostty" => &["-e"],
+        "terminator" => &["-x"],
+        "wezterm" => &["start", "--"],
+        "kitty" | "foot" => &[],
+        _ => return None,
+    };
+    Some(args.iter().map(|arg| arg.to_string()).collect())
+}
+
+fn expand_exec(exec: &str, entry: &DesktopEntry, name: &str) -> Result<Vec<String>, String> {
+    let tokens = shlex::split(exec).ok_or("Invalid executable quoting")?;
     let mut argv = Vec::new();
     for token in tokens {
         if token == "%i" {
@@ -205,13 +244,41 @@ fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, Str
             }
             match chars.next() {
                 Some('%') => expanded.push('%'),
-                Some('c') => expanded.push_str(&name),
+                Some('c') => expanded.push_str(name),
                 Some('k') => expanded.push_str(&entry.path.to_string_lossy()),
                 _ => return Err("Unsupported desktop field code".into()),
             }
         }
         argv.push(expanded);
     }
+    Ok(argv)
+}
+
+fn new_window_argv(entry: &DesktopEntry, name: &str) -> Option<Vec<String>> {
+    let action = entry.actions()?.into_iter().find(|id| {
+        let id: String = id
+            .to_lowercase()
+            .chars()
+            .filter(|c| !matches!(c, '-' | '_'))
+            .collect();
+        ["newwindow", "newemptywindow", "windownew"].contains(&id.as_str())
+    })?;
+    let argv = expand_exec(entry.action_exec(action)?, entry, name).ok()?;
+    argv.first()
+        .is_some_and(|program| executable(program))
+        .then_some(argv)
+}
+
+fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, String> {
+    let name = entry
+        .name(locales)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("Missing application name")?
+        .into_owned();
+    let is_terminal = entry
+        .categories()
+        .is_some_and(|items| items.contains(&"TerminalEmulator"));
+    let mut argv = expand_exec(entry.exec().ok_or("Missing executable")?, entry, &name)?;
     let program = argv
         .first()
         .filter(|s| !s.is_empty() && !s.contains('='))
@@ -225,6 +292,18 @@ fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, Str
     {
         argv.push("--standalone".into());
     }
+    let new_window_argv = if is_terminal || entry.terminal() {
+        None
+    } else {
+        new_window_argv(entry, &name)
+    };
+    let terminal_exec = match entry
+        .desktop_entry("X-TerminalArgExec")
+        .or_else(|| entry.desktop_entry("X-ExecArg"))
+    {
+        Some(value) => shlex::split(value),
+        None => is_terminal.then(|| known_exec_arg(&argv[0])).flatten(),
+    };
     if entry.terminal() {
         if !executable("xdg-terminal-exec") {
             return Err("No default terminal launcher is available".into());
@@ -243,13 +322,9 @@ fn prepare(entry: &DesktopEntry, locales: &[String]) -> Result<InstalledApp, Str
         argv,
         directory: entry.path().filter(|p| !p.is_empty()).map(PathBuf::from),
         desktop_file: entry.path.clone(),
-        is_terminal: entry
-            .categories()
-            .is_some_and(|items| items.contains(&"TerminalEmulator")),
-        terminal_exec: entry
-            .desktop_entry("X-TerminalArgExec")
-            .or_else(|| entry.desktop_entry("X-ExecArg"))
-            .and_then(shlex::split),
+        is_terminal,
+        terminal_exec,
+        new_window_argv,
     })
 }
 
@@ -288,6 +363,89 @@ mod tests {
             &[]
         )
         .is_err());
+    }
+
+    #[test]
+    fn new_window_action_skips_private_actions() {
+        let app = prepare(&entry("files", "[Desktop Entry]\nType=Application\nName=Files\nExec=/bin/echo %U\nActions=new-window;new-private-window;\n\n[Desktop Action new-window]\nName=New Window\nExec=/bin/echo --new-window %u\n\n[Desktop Action new-private-window]\nName=New Private\nExec=/bin/echo --private-window\n"), &[]).unwrap();
+        assert_eq!(
+            app.new_window_argv,
+            Some(vec!["/bin/echo".into(), "--new-window".into()])
+        );
+        let private = prepare(&entry("private", "[Desktop Entry]\nType=Application\nName=Private\nExec=/bin/echo\nActions=new-private-window;\n\n[Desktop Action new-private-window]\nName=New Private\nExec=/bin/echo --private-window\n"), &[]).unwrap();
+        assert_eq!(private.new_window_argv, None);
+        let plain = prepare(
+            &entry(
+                "plain",
+                "[Desktop Entry]\nType=Application\nName=Plain\nExec=/bin/echo\n",
+            ),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(plain.new_window_argv, None);
+    }
+
+    #[test]
+    fn known_terminals_get_program_arguments() {
+        assert_eq!(known_exec_arg("/usr/bin/ptyxis"), Some(vec!["--".into()]));
+        assert_eq!(known_exec_arg("terminator"), Some(vec!["-x".into()]));
+        assert_eq!(
+            known_exec_arg("wezterm"),
+            Some(vec!["start".into(), "--".into()])
+        );
+        assert_eq!(known_exec_arg("kitty"), Some(vec![]));
+        assert_eq!(known_exec_arg("/usr/bin/unknown"), None);
+    }
+
+    #[test]
+    fn terminal_without_desktop_keys_gets_known_arguments() {
+        let directory = std::env::temp_dir().join(format!("herdctrl-xterm-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let link = directory.join("xterm");
+        let _ = fs::remove_file(&link);
+        std::os::unix::fs::symlink("/bin/true", &link).unwrap();
+        let data = format!(
+            "[Desktop Entry]\nType=Application\nName=Xterm\nExec={} %U\nCategories=TerminalEmulator;\n",
+            link.display()
+        );
+        let app = prepare(&entry("xterm", &data), &[]).unwrap();
+        let _ = fs::remove_dir_all(&directory);
+        assert!(app.is_terminal);
+        assert_eq!(app.terminal_exec, Some(vec!["-e".into()]));
+    }
+
+    #[test]
+    fn default_terminal_prefers_xdg_then_known_usable_terminals() {
+        let app = |id: &str, terminal: bool, exec: bool| InstalledApp {
+            application: Application {
+                id: id.into(),
+                name: id.into(),
+            },
+            description: String::new(),
+            argv: vec!["/bin/true".into()],
+            directory: None,
+            desktop_file: PathBuf::new(),
+            is_terminal: terminal,
+            terminal_exec: exec.then(|| vec!["-e".into()]),
+            new_window_argv: None,
+        };
+        let apps = vec![
+            app("aaa.unusable", true, false),
+            app("org.gnome.Ptyxis", false, true),
+            app("org.kde.konsole", true, true),
+            app("foot", true, true),
+            app("zzz.other", true, true),
+        ];
+        let id = |xdg| choose_terminal(&apps, xdg).map(|app| app.application.id.as_str());
+        assert_eq!(id(Some("zzz.other")), Some("zzz.other"));
+        assert_eq!(id(Some("aaa.unusable")), Some("org.kde.konsole"));
+        assert_eq!(id(Some("missing")), Some("org.kde.konsole"));
+        assert_eq!(id(None), Some("org.kde.konsole"));
+        assert!(choose_terminal(&apps[..2], None).is_none());
+        assert_eq!(
+            choose_terminal(&apps[4..], None).map(|app| app.application.id.as_str()),
+            Some("zzz.other")
+        );
     }
 
     #[test]

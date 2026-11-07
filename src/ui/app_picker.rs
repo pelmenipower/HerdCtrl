@@ -112,6 +112,7 @@ mod tests {
             desktop_file: "/tmp/terminal.desktop".into(),
             is_terminal: true,
             terminal_exec: Some(vec!["--".into()]),
+            new_window_argv: None,
         }];
         let mut picker = AppPicker::new(0, 0);
         for events in [vec![], vec![egui::Event::Text("term".into())]] {
