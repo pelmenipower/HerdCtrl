@@ -13,7 +13,7 @@
 | 5 Structure | Separate core, UI and Linux OS modules. Editable SVG icon and exported 256-pixel PNG provided; PNG is embedded in the native window. Desktop icon presentation remains unverified. |
 | 6 Binary <15 MB | 4,852,872 bytes (4.85 MB), optimized and stripped x86_64 Linux build; meets size target. |
 | 6 Warm startup <100 ms | Latest five warm visibility samples: median 86.20 ms, range 75.95–96.78 ms. Visibility is not first rendered frame; first-frame acceptance remains open. |
-| 6 Active RSS <30 MB | Fails: main process 76,724–76,868 KiB (~78.6–78.7 MB) after one second. Identification additionally uses one temporary helper process; its sampled RSS was 81,220 KiB (~83.2 MB) for four labels. |
+| 6 Active RSS <30 MB | Fails: median main-process RSS 80,356 KiB (~78.5 MiB) over nine starts one second after the window appears (2026-11-07 investigation, unchanged build). About 41 MB of it is Mesa's `libLLVM` mapping and ~10 MB is `libgallium`; no kept code change reduced it. Identification additionally uses one temporary helper process; its sampled RSS was 81,220 KiB (~83.2 MB) for four labels. See "RSS investigation — 2026-11-07". |
 | 6 Reliability | UI does not perform helper-process polling. Five-second polling budget after launch delay; helper-process timeouts can extend elapsed completion time. |
 
 ## Desktop acceptance procedure
@@ -154,3 +154,53 @@ On Ubuntu X11 with `wmctrl`, `xrandr`, and two connected displays:
 - Two regression tests cover complete zone metadata preservation, independent edits/removals, unique names for repeated copies, missing/empty views, original shortcut preservation and JSON roundtrip/validation. Checks passed: `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (43 passed, seven opt-in integrations ignored), and `cargo build --release --locked`. Earlier desktop acceptance limits remain open; no compositor/launcher code changed.
 - Visually inspected the final native GNOME window: Duplicate view is visible below New view. The updated release is running on the user's saved profile. Existing edits were saved through the GUI before normal close, with a private prior-file backup at `~/.config/herdctrl/layouts.before-duplicate-view-20261107-104644.json`. No demonstration copy was added to the user's profile. `git diff --check` passed.
 - PRD 6 measured for this build: binary 4,868,184 bytes; five warm visible-window samples after one excluded warmup 77.54, 89.67, 78.91, 90.39 and 93.04 ms (median 89.67 ms); RSS after one second 77,768, 77,796, 77,792, 77,804 and 77,860 KiB. Report: `target/gnome-startup-measurements.json`. Size meets the target; RAM still exceeds 30 MB, and visible-window timing does not verify first-rendered-frame timing.
+
+## RSS investigation — 2026-11-07
+
+**Result:** PRD 6 (active RSS < 30 MB) is **not met**. The unchanged build measures a median of 80,356 KiB (about 78.5 MiB) across nine starts. No code reduction was kept, because every candidate was either a no-op or gained less than the 1 MB threshold. PRD.md was not changed.
+
+**Method.** `target/release/herdctrl` was built with `cargo build --release --locked` (4,868,312 bytes). `scripts/measure-rss.sh [runs] [binary]` starts the binary with a throwaway `XDG_CONFIG_HOME`, runs one excluded warm-up, and then samples `VmRSS`, `RssAnon`, `RssFile` and `RssShmem` from `/proc/<pid>/status` one second after an X11 window named `HerdCtrl` appears (`xwininfo -root -tree`, polling up to 5 s). Only the PID it started is signalled. The breakdown came from `/proc/<pid>/smaps` grouped by mapping, with one instance running. Environment: GNOME 50 Wayland session, app via XWayland, Intel Meteor Lake GPU (i915 kernel driver, Mesa 26.0.8 `iris` Gallium driver), 15 GB RAM, no Xvfb.
+
+**Noise.** The same binary drifted between about 77.5 and 80.6 MB across the session. The cause was a 3.6 MB shmem mapping that appeared in some sessions and not others, which also depended on the run location. Each candidate was therefore compared with the baseline interleaved in one session. Differences below roughly 1 MB are not meaningful.
+
+**Baseline (unchanged code).**
+
+| Measurement | VmRSS KiB | RssAnon | RssFile | RssShmem |
+| --- | --- | --- | --- | --- |
+| 9 runs, median (final) | 80,356 | 15,824 | 64,528 | 4 |
+| 5 runs, median (earlier session) | 77,520 | 15,812 | 61,692 | 4 |
+
+**Breakdown** (`smaps`, one instance, RSS in KiB; anon = private anonymous part of that mapping):
+
+| Mapping | RSS | Anon | Notes |
+| --- | --- | --- | --- |
+| `libLLVM.so.21.1` | 40,828 | 2,192 | Pulled in as `DT_NEEDED` of `libgallium`; verified with `ldd` |
+| `libgallium-26.0.8` (Mesa Gallium, incl. iris) | 10,480 | 996 | Loaded by `libGLX_mesa` for the GL context |
+| `[heap]` | 9,420 | 9,420 | Mesa driver state plus eframe/egui/app allocations |
+| `herdctrl` binary | 3,904 | 92 | Text pages plus embedded fonts actually touched |
+| `[anon]` (other mmaps, thread stacks) | 2,356 | 2,356 | |
+| `libc.so.6` / `libstdc++` | 1,872 / 1,420 | 24 / 72 | |
+| `libX11`, `libGLdispatch`, `libxkbcommon` and about 40 smaller libraries | about 6,500 total | | Each under 1 MB |
+
+LLVM alone accounts for about 53 % of the RSS. A bare process that only `dlopen`s `libLLVM.so.21.1` goes from 11.2 MB to 57.7 MB RSS, and then loading `libgallium` adds about 4 MB more (`python3 -I` with `ctypes`, diagnostic only). The app's own code and data are a small share. Which library code touches those pages was not traced further.
+
+**Experiments** (each measured against the baseline in the same session; no change was kept unless it gained more than 1 MB without functional loss):
+
+| Experiment | Median VmRSS KiB | Versus baseline | Kept |
+| --- | --- | --- | --- |
+| `multisampling: 0`, `depth_buffer: 0`, `stencil_buffer: 0` | not measured separately | Already the eframe defaults (`epi.rs`), so the binary is unchanged | No (no-op) |
+| `hardware_acceleration: Required` | 80,628 / 80,608 | Baseline 80,236 / 80,132 in two series, so no gain | No (would also refuse to start without hardware GL) |
+| `vsync: false` | 80,672 | Baseline 80,216 | No |
+| `dithering: false` | 80,548 | Baseline 80,332 | No |
+| All default fonts removed (upper bound, diagnostic only; UI glyphs would be lost) | 79,412 | Baseline 80,272, about 0.9 MB less | No, below threshold. Dropping only the emoji fonts would save less. The UI uses `·`, `×`, `—` and `…`, which Ubuntu-Light and Hack cover. |
+| `MALLOC_ARENA_MAX=2` (environment only) | 80,172 (one run) | No measurable effect | No; no allocator dependency added |
+| `LIBGL_ALWAYS_SOFTWARE=1` (diagnostic) | 112,600 (one run, `smaps_rollup`) | Worse, because llvmpipe also loads LLVM | No, not shipped |
+| Renderer `wgpu` (eframe `wgpu` feature, default backends) | 88,864 | Worse. The GL backend and every installed Vulkan ICD load, including the LLVM-linked lavapipe. Binary 7,459,328 bytes. | No |
+| `wgpu` with `WGPU_BACKEND=vulkan` and `VK_LOADER_DRIVERS_DISABLE=*lvp*` (diagnostic) | 75,092 | Only about 5 MB less, because other LLVM-linked ICDs still load | No |
+| `wgpu` with `WGPU_BACKEND=vulkan` and `VK_ICD_FILENAMES` set to the Intel ICD only (diagnostic) | 26,128 | About 54 MB less. Alive and window `1100x740` found. Rendered pixels not verified. | No |
+
+**Floor and reasons.** With eframe's `glow` renderer on this Mesa stack, the process cannot go below about 77 to 80 MB. The main cost is the `libLLVM` load that `libgallium` requires, and nothing in the app's code or in the eframe options removes it. The only configuration that reached 30 MB or less was a diagnostic one, with wgpu on Vulkan and the Intel ICD forced through environment variables. It is not shippable as it stands: the selection is hardcoded to one vendor, other Vulkan ICDs load LLVM too, the wgpu build is larger, and the GPU/GNOME acceptance would have to be repeated. Making it a real option needs a product decision about the renderer (Cargo features, GPU support matrix, fallback behaviour), so it was not implemented on this branch. PRD 6 remains unmet, and PRD.md was not changed.
+
+**Limits.** The metric is RSS one second after the window appears, not peak memory. The `wgpu` figures are diagnostic, and no pixel output was verified for them. Driver mappings depend on the host's Mesa and GPU, so the numbers apply to this machine only. The single-session noise is about 3 MB.
+
+**Checks.** `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (43 passed, seven opt-in integration tests ignored), `cargo build --release --locked` and `bash -n scripts/measure-rss.sh` passed. Binary size is 4,868,312 bytes. The only committed change is the new `scripts/measure-rss.sh` and this section.
