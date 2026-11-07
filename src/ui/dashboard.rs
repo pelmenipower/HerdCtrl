@@ -2,6 +2,7 @@ use super::{
     app_picker::AppPicker,
     canvas::{self, Canvas},
     identify::{Event as IdentifyEvent, Identification},
+    zone_editor,
 };
 use crate::{
     core::{
@@ -485,138 +486,19 @@ impl eframe::App for Dashboard {
                 );
                 if let Some(index) = self.selected_zone {
                     if let Some(zone) = view.zones.get_mut(index) {
-                        let is_terminal = zone.application.as_ref().is_some_and(|selected| {
-                            self.applications.iter().any(|app| app.application.id == selected.id && app.is_terminal)
-                        });
-                        let mut delete = false;
-                        egui::Grid::new("zone-properties")
-                            .num_columns(2)
-                            .show(ui, |ui| {
-                                ui.label("Zone name");
-                                self.dirty |= ui.text_edit_singleline(&mut zone.name).changed();
-                                ui.end_row();
-                                ui.label("Application");
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        zone.application
-                                            .as_ref()
-                                            .map(|app| app.name.as_str())
-                                            .unwrap_or(if zone.command.trim().is_empty() {
-                                                "No application selected"
-                                            } else {
-                                                "Custom command"
-                                            }),
-                                    );
-                                    if ui
-                                        .button(if zone.application.is_some() {
-                                            "Change…"
-                                        } else {
-                                            "Choose application…"
-                                        })
-                                        .clicked()
-                                    {
-                                        self.app_picker =
-                                            Some(AppPicker::new(self.selected_view, index));
-                                    }
-                                });
-                                ui.end_row();
-                                if is_terminal {
-                                    ui.label("Program in terminal");
-                                    self.dirty |= ui.add(egui::TextEdit::singleline(&mut zone.terminal_command)
-                                        .desired_width(420.0).hint_text("Optional, e.g. herdr or htop")).changed();
-                                    ui.end_row();
-                                }
-                                ui.label("Monitor");
-                                egui::ComboBox::from_id_salt("monitor")
-                                    .selected_text(self.monitors.iter().enumerate().find(|(_,monitor)|monitor.name==zone.monitor)
-                                        .map(|(index,monitor)|monitor.display_name(index)).unwrap_or_else(||format!("Disconnected · {}",zone.monitor)))
-                                    .show_ui(ui, |ui| {
-                                        for (number,monitor) in self.monitors.iter().enumerate() {
-                                            self.dirty |= ui
-                                                .selectable_value(
-                                                    &mut zone.monitor,
-                                                    monitor.name.clone(),
-                                                    monitor.display_name(number),
-                                                )
-                                                .changed();
-                                        }
-                                    });
-                                ui.end_row();
-                                ui.label("");
-                                delete = ui.button("Delete zone").clicked();
-                                ui.end_row();
-                            });
-                        egui::CollapsingHeader::new("Advanced")
-                            .id_salt((self.selected_view, index, "advanced"))
-                            .show(ui, |ui| {
-                                egui::Grid::new("advanced-properties").num_columns(2).show(
-                                    ui,
-                                    |ui| {
-                                        ui.label("Custom command");
-                                        if ui.add(egui::TextEdit::singleline(&mut zone.command)
-                                        .desired_width(420.0)
-                                        .hint_text("Optional: replace the selected application"))
-                                        .changed() {
-                                        if zone.application.is_some() { zone.run_in_terminal = is_terminal; }
-                                        zone.application = None;
-                                        zone.terminal_command.clear();
-                                        self.dirty = true;
-                                    }
-                                        ui.end_row();
-                                        if zone.application.is_none() {
-                                            ui.label("");
-                                            self.dirty |= ui.checkbox(&mut zone.run_in_terminal, "Run in terminal").changed();
-                                            ui.end_row();
-                                        }
-                                        ui.label("Launch delay");
-                                        self.dirty |= ui
-                                            .add(
-                                                egui::DragValue::new(&mut zone.delay_ms)
-                                                    .range(0..=60_000)
-                                                    .suffix(" ms"),
-                                            )
-                                            .changed();
-                                        ui.end_row();
-                                        ui.label("Zone");
-                                        ui.horizontal(|ui| {
-                                            self.dirty |= ui
-                                                .add(
-                                                    egui::DragValue::new(&mut zone.bounds.x)
-                                                        .prefix("X ")
-                                                        .speed(0.005)
-                                                        .range(0.0..=1.0 - zone.bounds.width),
-                                                )
-                                                .changed();
-                                            self.dirty |= ui
-                                                .add(
-                                                    egui::DragValue::new(&mut zone.bounds.y)
-                                                        .prefix("Y ")
-                                                        .speed(0.005)
-                                                        .range(0.0..=1.0 - zone.bounds.height),
-                                                )
-                                                .changed();
-                                            self.dirty |= ui
-                                                .add(
-                                                    egui::DragValue::new(&mut zone.bounds.width)
-                                                        .prefix("W ")
-                                                        .speed(0.005)
-                                                        .range(0.001..=1.0 - zone.bounds.x),
-                                                )
-                                                .changed();
-                                            self.dirty |= ui
-                                                .add(
-                                                    egui::DragValue::new(&mut zone.bounds.height)
-                                                        .prefix("H ")
-                                                        .speed(0.005)
-                                                        .range(0.001..=1.0 - zone.bounds.y),
-                                                )
-                                                .changed();
-                                        });
-                                        ui.end_row();
-                                    },
-                                );
-                            });
-                        if delete {
+                        let outcome = zone_editor::show(
+                            ui,
+                            self.selected_view,
+                            index,
+                            zone,
+                            &self.monitors,
+                            &self.applications,
+                        );
+                        self.dirty |= outcome.changed;
+                        if outcome.choose_application {
+                            self.app_picker = Some(AppPicker::new(self.selected_view, index));
+                        }
+                        if outcome.delete {
                             view.zones.remove(index);
                             self.selected_zone = None;
                             self.dirty = true;
