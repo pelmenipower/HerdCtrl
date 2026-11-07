@@ -177,6 +177,10 @@ impl Dashboard {
                 continue;
             }
             match view.hotkey.parse::<HotKey>() {
+                Ok(key) if key.mods.is_empty() => self.log.push(format!(
+                    "{} hotkey needs at least one modifier (Super, Ctrl, Alt or Shift)",
+                    view.name
+                )),
                 Ok(key) => match manager.register(key) {
                     Ok(()) => self.bindings.push((key, index)),
                     Err(e) => self
@@ -244,6 +248,13 @@ impl Dashboard {
             if !view.hotkey.trim().is_empty() && view.hotkey.parse::<HotKey>().is_err() {
                 self.log.push(format!(
                     "Invalid hotkey for {}. Example: Super+Shift+KeyD",
+                    view.name
+                ));
+                return;
+            }
+            if !view.hotkey.trim().is_empty() && !hotkey_input::has_modifier(&view.hotkey) {
+                self.log.push(format!(
+                    "Hotkey for {} needs at least one modifier (Super, Ctrl, Alt or Shift)",
                     view.name
                 ));
                 return;

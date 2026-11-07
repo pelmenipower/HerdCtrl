@@ -106,6 +106,13 @@ pub fn show(ui: &mut egui::Ui, recorder: &mut Recorder, hotkey: &mut String) -> 
     }
 }
 
+/// True when `hotkey` parses and has at least one modifier. A bare key would be grabbed system-wide.
+pub fn has_modifier(hotkey: &str) -> bool {
+    hotkey
+        .parse::<HotKey>()
+        .is_ok_and(|key| !key.mods.is_empty())
+}
+
 /// Splits a stored hotkey such as `Super+Shift+KeyD` into modifiers and key code.
 fn parse(hotkey: &str) -> (Modifiers, Option<String>) {
     let mut modifiers = Modifiers::empty();
@@ -313,6 +320,17 @@ mod tests {
                 "{hotkey} has no GNOME accelerator"
             );
         }
+    }
+
+    #[test]
+    fn has_modifier_requires_a_parsed_modifier() {
+        assert!(has_modifier("Super+KeyD"));
+        assert!(has_modifier("Ctrl+F5"));
+        assert!(!has_modifier("KeyD"));
+        assert!(!has_modifier("F5"));
+        assert!(!has_modifier("Super"));
+        assert!(!has_modifier("NotAKey"));
+        assert!(!has_modifier(""));
     }
 
     #[test]

@@ -127,6 +127,11 @@ fn worker(
 
 pub fn accelerator(input: &str) -> Result<String, String> {
     let key: HotKey = input.parse().map_err(|e| format!("Invalid hotkey: {e}"))?;
+    if key.mods.is_empty() {
+        return Err(format!(
+            "Hotkey {input} needs at least one modifier (Super, Ctrl, Alt or Shift)"
+        ));
+    }
     let mut result = String::new();
     for (modifier, name) in [
         (Modifiers::CONTROL, "Control"),
@@ -203,6 +208,8 @@ mod tests {
         assert_eq!(accelerator("Super+Digit1").unwrap(), "<Super>1");
         assert_eq!(accelerator("Alt+ArrowLeft").unwrap(), "<Alt>Left");
         assert!(accelerator("NotAKey").is_err());
+        assert!(accelerator("KeyD").is_err());
+        assert!(accelerator("F5").is_err());
     }
 
     #[test]
