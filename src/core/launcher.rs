@@ -342,7 +342,10 @@ fn launch_new(
             if let Some(name) = single_instance {
                 return Err(format!("{name} is already running and its desktop entry offers no New Window action, so no second window opened. Open another window manually, then launch the view again."));
             }
-            return Err("No new window belonging to this process appeared within 5 s. Select a terminal application for terminal programs.".into());
+            return Err(match app {
+                Some(app) => format!("No new {} window appeared within 5 s.", app.application.name),
+                None => "No new window belonging to this process appeared within 5 s. Select a terminal application for terminal programs.".into(),
+            });
         }
         thread::sleep(Duration::from_millis(80));
     }

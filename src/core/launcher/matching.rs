@@ -3,12 +3,19 @@ use crate::{
     os::linux::{self, Window},
 };
 use std::{
-    collections::HashSet, ffi::OsString, fs, io::Read, os::unix::ffi::OsStringExt, path::PathBuf,
+    collections::HashSet,
+    ffi::OsString,
+    fs,
+    io::Read,
+    os::unix::ffi::{OsStrExt, OsStringExt},
+    path::PathBuf,
 };
 
 #[derive(Default, Debug)]
 pub(super) struct ProcessIdentity {
     pub executable: Option<PathBuf>,
+    /// The running binary was deleted or replaced, e.g. by a browser's self-update.
+    pub executable_replaced: bool,
     pub desktop_file: Option<PathBuf>,
     pub terminal_command: Option<String>,
 }
@@ -22,8 +29,12 @@ impl ProcessIdentity {
                 .split(|byte| *byte == 0)
                 .find_map(|item| item.strip_prefix(key))
         };
+        let executable = fs::read_link(directory.join("exe")).ok();
         Self {
-            executable: fs::read_link(directory.join("exe")).ok(),
+            executable_replaced: executable
+                .as_ref()
+                .is_some_and(|path| path.as_os_str().as_bytes().ends_with(b" (deleted)")),
+            executable,
             desktop_file: variable(b"GIO_LAUNCHED_DESKTOP_FILE=")
                 .map(|value| PathBuf::from(OsString::from_vec(value.to_vec())))
                 .and_then(|path| fs::canonicalize(path).ok()),
@@ -81,7 +92,9 @@ impl AppMatcher {
 
     pub fn owns(&self, identity: &ProcessIdentity) -> bool {
         match (&self.executable, &identity.executable) {
-            (Some(expected), Some(actual)) => expected == actual,
+            (Some(expected), Some(actual)) if expected == actual => true,
+            // A replaced binary no longer names the app; its desktop launch marker still does.
+            (Some(_), Some(_)) if !identity.executable_replaced => false,
             _ => self
                 .desktop_file
                 .as_ref()
@@ -213,6 +226,20 @@ mod tests {
             }),
             "An inherited desktop marker must not match a different native executable"
         );
+        assert!(
+            matcher.owns(&ProcessIdentity {
+                executable: Some("/opt/zen/zen.moz-backup (deleted)".into()),
+                executable_replaced: true,
+                desktop_file: matcher.desktop_file.clone(),
+                ..Default::default()
+            }),
+            "A self-updated app is still recognised by its desktop launch"
+        );
+        assert!(!matcher.owns(&ProcessIdentity {
+            executable: Some("/opt/other (deleted)".into()),
+            executable_replaced: true,
+            ..Default::default()
+        }));
         let mut shared = app.clone();
         shared.argv = vec!["/bin/sh".into()];
         assert!(!AppMatcher::new(&shared, "").owns(&ProcessIdentity {
