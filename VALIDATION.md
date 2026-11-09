@@ -293,3 +293,7 @@ A first fix retried the icon every 5 s. It worked: after unlocking, the icon app
 | Median | 75,656 | 16,476 | 69 ms |
 
 PRD 6: binary size and warm visible-window time (under 100 ms) are met; the visible window is not the first rendered frame. Editor RAM remains above 30 MB (Mesa/LLVM mappings, see the RSS investigation), slightly below the 77–80 MB measured before the redesign. The tray, which stays resident, uses about 8.7 MB VmRSS / 1.8 MB RssAnon.
+
+## Interaction tests — 2026-11-09
+
+`src/ui/dashboard/interactions.rs` drives the real editor through `egui_kittest` (no GPU) with sample views, monitors and apps: **+** adds a view, selects it and starts drawing; Ctrl+S writes the layouts to a temporary file and clears the unsaved state; **…** → **Delete view…** → **Delete view** removes the view only after confirming; in the app picker ↑ and Enter choose the second app. Saving in tests does not start a tray. Checks: fmt, clippy with warnings denied, 70 tests passed (eight opt-in tests ignored), release build 7,796,680 bytes, `git diff --check`. Hover appearance and real pointer dragging in the window are still checked only by hand.

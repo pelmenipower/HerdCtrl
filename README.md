@@ -115,7 +115,7 @@ python3 scripts/package-gnome-extension.py
 
 CI runs these checks on Ubuntu and uploads the compiled binary and extension bundle as workflow artifacts. Node.js is needed only for the compositor-independent extension tests. CI does not publish releases.
 
-To review the interface without opening a window, render its main states (edit, launching, failed, app picker, hotkey recording, first start; dark and light) to `target/ui-snapshots/*.png`. This opt-in test uses `egui_kittest` with a wgpu adapter and fixed sample data; it does not compare against stored images:
+`cargo test` also drives the editor with simulated pointer and keyboard input through `egui_kittest` (add a view, save with Ctrl+S, delete a view through its menu, choose an app with the arrow keys); these need no GPU. To review the interface without opening a window, render its main states (edit, launching, failed, app picker, hotkey recording, first start; dark and light) to `target/ui-snapshots/*.png`. This opt-in test uses `egui_kittest` with a wgpu adapter and fixed sample data; it does not compare against stored images:
 
 ```sh
 cargo test --locked render_ui_snapshots -- --ignored

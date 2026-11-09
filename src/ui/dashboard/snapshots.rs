@@ -16,7 +16,7 @@ fn monitor(name: &str, x: i32, y: i32, height: u32, work_area: Option<Area>) -> 
     }
 }
 
-fn monitors() -> Vec<Monitor> {
+pub(super) fn monitors() -> Vec<Monitor> {
     vec![
         monitor("DP-2", 0, 0, 1200, None),
         monitor("DP-7", 1920, 0, 1200, None),
@@ -52,7 +52,7 @@ fn app(id: &str, name: &str, description: &str, terminal: bool) -> InstalledApp 
     }
 }
 
-fn config() -> Config {
+pub(super) fn config() -> Config {
     serde_json::from_value(serde_json::json!({"views": [
         {"name": "Workstation", "hotkey": "Ctrl+Shift+KeyD", "zones": [
             {"name": "Browser main", "monitor": "DP-6", "application": {"id": "zen", "name": "Zen Browser"},
@@ -82,9 +82,10 @@ fn report(zone: usize, outcome: Outcome) -> Report {
     }
 }
 
-fn render(name: &str, theme: Theme, setup: impl FnOnce(&mut Dashboard)) {
+/// The editor with sample views, monitors and applications, and no background workers.
+pub(super) fn dashboard(path: PathBuf) -> Dashboard {
     let ctx = egui::Context::default();
-    let mut dashboard = Dashboard::with_parts(&ctx, config(), PathBuf::new(), None);
+    let mut dashboard = Dashboard::with_parts(&ctx, config(), path, None);
     dashboard.monitors = monitors();
     dashboard.selected_zone = Some(1);
     dashboard.tray_running = true;
@@ -111,8 +112,12 @@ fn render(name: &str, theme: Theme, setup: impl FnOnce(&mut Dashboard)) {
             false,
         ),
     ];
-    setup(&mut dashboard);
-    // Fonts set in one frame apply from the next, so the first frame only installs the theme.
+    dashboard
+}
+
+/// A 1280×800 harness. Fonts set in one frame apply from the next, so the first frame only
+/// installs the theme.
+pub(super) fn harness<'a>(dashboard: Dashboard, theme: Theme) -> Harness<'a, Dashboard> {
     let mut installed = false;
     let mut harness = Harness::builder()
         .with_size(Vec2::new(1280.0, 800.0))
@@ -128,7 +133,15 @@ fn render(name: &str, theme: Theme, setup: impl FnOnce(&mut Dashboard)) {
             },
             dashboard,
         );
-    harness.run_steps(4);
+    harness.run_steps(2);
+    harness
+}
+
+fn render(name: &str, theme: Theme, setup: impl FnOnce(&mut Dashboard)) {
+    let mut dashboard = dashboard(PathBuf::new());
+    setup(&mut dashboard);
+    let mut harness = harness(dashboard, theme);
+    harness.run_steps(2);
     let image = harness.render().expect("render with a wgpu adapter");
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/ui-snapshots");
     std::fs::create_dir_all(&directory).unwrap();

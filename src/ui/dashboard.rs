@@ -370,7 +370,13 @@ impl Dashboard {
             Ok(()) => {
                 self.dirty = false;
                 // The tray reloads the file and rebinds the hotkeys; restart it if it was quit.
-                match tray::ensure_running() {
+                // Tests never start a real tray for the user's layouts.
+                let tray = if cfg!(test) {
+                    Ok(())
+                } else {
+                    tray::ensure_running()
+                };
+                match tray {
                     Ok(()) => self
                         .log
                         .push("Layouts saved. The tray applies the hotkeys.".into()),
@@ -1324,6 +1330,8 @@ impl Dashboard {
     }
 }
 
+#[cfg(test)]
+mod interactions;
 #[cfg(test)]
 mod snapshots;
 
