@@ -240,3 +240,12 @@ Live checks passed: the tray registered with the StatusNotifierWatcher (Ubuntu A
 Checks: `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (62 passed, seven opt-in integration tests ignored), `cargo build --release --locked`, `bash -n scripts/measure-rss.sh`.
 
 Not verified yet: a physical hotkey press triggering a view through the tray, Edit layouts… / left click opening the editor, Start at login across a real re-login, the notification display, and the X11 session path. Without the AppIndicator extension GNOME shows no icon; hotkeys still work, but the tray can then only be quit by ending the process. The tray's RSS figure does not change the editor's PRD 6 RAM result above.
+
+## Recorder and new-window placement — 2026-11-09
+
+User feedback: clicking modifier toggles was awkward, and two terminal zones did not end up as saved.
+
+- Hotkey recorder: one **Record hotkey…** button records the pressed combination. Ctrl, Alt and Shift come from egui's key event. Super is read from the X server pointer mask (`XQueryPointer`, `Mod4Mask`) through `x11-dl` 2.21, which winit already links, because egui-winit only reports Super on macOS. A press without any modifier keeps recording with a hint. Test: `records_held_modifiers_in_stored_order`. Smoke check on this GNOME 50 XWayland session: the query returns `false` with no key held. A physical Super+key recording is not verified yet. Limit: combinations grabbed by GNOME or by the running tray never reach the editor.
+- Terminal placement: the user's Ptyxis has `restore-window-size=true` (saved 118×51 cells). The tray log reported both terminal zones as placed, so the likely cause is the app resizing its window after the first placement. The bridge exposes no window geometry, so this was not confirmed. Newly opened windows are now placed again after 0.25, 0.75 and 1.75 s; reused windows are not. The "positioned" message is sent after the first placement. Same-app launches do not wait for the settle phase. Not yet verified on the real desktop.
+
+Checks: fmt, clippy with warnings denied, 61 tests passed (seven opt-in integration tests ignored), release build.

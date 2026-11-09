@@ -14,6 +14,7 @@ freedesktop-desktop-entry = { version = "0.8.3", default-features = false }
 shlex = "2"
 ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
+x11-dl = "2.21.0"
 
 [profile.release]
 opt-level = "s"

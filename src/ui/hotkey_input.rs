@@ -1,14 +1,12 @@
-use eframe::egui::{self, Color32, Key, RichText};
+use eframe::egui::{self, Color32, Key};
 use global_hotkey::hotkey::{HotKey, Modifiers};
 
 /// Recording state for the hotkey widget. Reset whenever the selected view changes.
 #[derive(Default)]
 pub struct Recorder {
     recording: bool,
-    /// Modifier toggles kept while no key is chosen, because such a hotkey stores no text.
-    modifiers: Modifiers,
-    /// The last key press could not be stored, so recording continues with a hint.
-    unsupported: bool,
+    /// Why the last key press was not stored; recording continues with this hint.
+    hint: Option<&'static str>,
 }
 
 /// What a single key press does while recording.
@@ -19,118 +17,146 @@ enum Press {
     Unsupported,
 }
 
-/// Modifier toggles in the order they are written to the stored hotkey string.
-const TOGGLES: [(Modifiers, &str); 4] = [
+/// Modifiers in the order they are written to the stored hotkey string.
+const MODIFIERS: [(Modifiers, &str); 4] = [
     (Modifiers::SUPER, "Super"),
     (Modifiers::CONTROL, "Ctrl"),
     (Modifiers::ALT, "Alt"),
     (Modifiers::SHIFT, "Shift"),
 ];
 
-/// Shows the hotkey as modifier toggles plus one key. Returns true when `hotkey` changed.
+/// Shows the hotkey as one button that records the pressed combination. Returns true when `hotkey` changed.
 pub fn show(ui: &mut egui::Ui, recorder: &mut Recorder, hotkey: &mut String) -> bool {
-    if !is_representable(hotkey) {
-        // Keep odd or legacy text visible so it can be cleared deliberately.
-        let mut changed = false;
-        ui.label(RichText::new(hotkey.as_str()).monospace());
-        if ui.button("Clear").clicked() {
-            hotkey.clear();
-            changed = true;
-        }
-        return changed;
-    }
-
-    let (stored_modifiers, mut key) = parse(hotkey);
-    let mut modifiers = if key.is_some() {
-        stored_modifiers
-    } else {
-        recorder.modifiers
-    };
-
-    // Handle key presses before drawing buttons so the press that starts recording is not reused.
+    let mut next = None;
     // A focused text field owns the keyboard, so recording stops instead of stealing its keys.
     if recorder.recording && ui.ctx().wants_keyboard_input() {
-        recorder.recording = false;
-        recorder.unsupported = false;
+        *recorder = Recorder::default();
     }
+    // Handle key presses before drawing buttons so the press that starts recording is not reused.
     if recorder.recording {
-        let presses: Vec<Key> = ui.input(|input| {
+        let presses: Vec<(Key, egui::Modifiers)> = ui.input(|input| {
             input
                 .events
                 .iter()
                 .filter_map(|event| match event {
                     egui::Event::Key {
-                        key, pressed: true, ..
-                    } => Some(*key),
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some((*key, *modifiers)),
                     _ => None,
                 })
                 .collect()
         });
-        for pressed in presses {
+        for (pressed, held) in presses {
             match press_outcome(pressed) {
                 Press::Cancel => {
-                    recorder.recording = false;
-                    recorder.unsupported = false;
+                    *recorder = Recorder::default();
                     break;
                 }
                 Press::Capture(code) => {
-                    key = Some(code.to_string());
-                    recorder.recording = false;
-                    recorder.unsupported = false;
+                    let modifiers = modifiers(held, super_held());
+                    if modifiers.is_empty() {
+                        recorder.hint =
+                            Some("Hold Super, Ctrl, Alt or Shift while pressing the key");
+                        continue;
+                    }
+                    next = Some(compose(modifiers, Some(code)));
+                    *recorder = Recorder::default();
                     break;
                 }
-                Press::Unsupported => recorder.unsupported = true,
+                Press::Unsupported => recorder.hint = Some("Key not supported, press another key"),
             }
         }
     }
 
     let mut clear = false;
     ui.horizontal(|ui| {
-        for (modifier, label) in TOGGLES {
-            let mut on = modifiers.contains(modifier);
-            if ui.toggle_value(&mut on, label).clicked() {
-                modifiers.set(modifier, on);
-            }
-        }
-        let key_text = if recorder.recording {
-            "Press a key…".to_string()
+        let text = if recorder.recording {
+            "Press the shortcut…".to_string()
+        } else if hotkey.trim().is_empty() {
+            "Record hotkey…".to_string()
         } else {
-            key.as_deref().map_or("Set key…".to_string(), key_label)
+            label(hotkey)
         };
-        if ui.button(key_text).clicked() && !recorder.recording {
+        let button = ui.add(egui::Button::new(text).selected(recorder.recording));
+        if button.clicked() && !recorder.recording {
             recorder.recording = true;
         }
-        if ui.button("Clear").clicked() {
+        button.on_hover_text(
+            "Click, then press the whole combination, e.g. Super+Alt+D. Escape cancels.",
+        );
+        if !hotkey.is_empty() && ui.button("Clear").clicked() {
             clear = true;
         }
-        if recorder.recording && recorder.unsupported {
-            ui.colored_label(
-                Color32::from_rgb(244, 160, 110),
-                "Key not supported, press another key",
-            );
-        }
-        if key.is_some() && modifiers.is_empty() {
-            ui.colored_label(
-                Color32::from_rgb(244, 160, 110),
-                "Add at least one modifier",
-            );
+        if let Some(hint) = recorder.hint.filter(|_| recorder.recording) {
+            ui.colored_label(Color32::from_rgb(244, 160, 110), hint);
         }
     });
 
     if clear {
-        recorder.recording = false;
-        recorder.unsupported = false;
-        modifiers = Modifiers::empty();
-        key = None;
+        *recorder = Recorder::default();
+        next = Some(String::new());
     }
-    recorder.modifiers = modifiers;
-    let next = compose(modifiers, key.as_deref());
-    if next != *hotkey {
-        *hotkey = next;
-        true
-    } else {
-        false
+    match next {
+        Some(next) if next != *hotkey => {
+            *hotkey = next;
+            true
+        }
+        _ => false,
     }
+}
+
+/// Global-hotkey modifiers from egui's state plus Super, which egui does not report on Linux.
+fn modifiers(held: egui::Modifiers, super_key: bool) -> Modifiers {
+    let mut result = Modifiers::empty();
+    result.set(Modifiers::SUPER, super_key);
+    result.set(Modifiers::CONTROL, held.ctrl);
+    result.set(Modifiers::ALT, held.alt);
+    result.set(Modifiers::SHIFT, held.shift);
+    result
+}
+
+/// Asks the X server (the editor runs on X11 or XWayland) whether Super is held.
+fn super_held() -> bool {
+    use x11_dl::xlib;
+    let Ok(xlib) = xlib::Xlib::open() else {
+        return false;
+    };
+    // SAFETY: a private, short-lived display connection; every out-pointer is a valid local.
+    unsafe {
+        let display = (xlib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            return false;
+        }
+        let root = (xlib.XDefaultRootWindow)(display);
+        let (mut root_return, mut child) = (0, 0);
+        let (mut root_x, mut root_y, mut x, mut y) = (0, 0, 0, 0);
+        let mut mask = 0;
+        (xlib.XQueryPointer)(
+            display,
+            root,
+            &mut root_return,
+            &mut child,
+            &mut root_x,
+            &mut root_y,
+            &mut x,
+            &mut y,
+            &mut mask,
+        );
+        (xlib.XCloseDisplay)(display);
+        mask & xlib::Mod4Mask != 0
+    }
+}
+
+/// Readable form of a stored hotkey, e.g. `Super+Alt+KeyD` as `Super+Alt+D`.
+fn label(hotkey: &str) -> String {
+    hotkey
+        .split('+')
+        .map(|part| key_label(part.trim()))
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 /// True when `hotkey` parses and has at least one modifier. A bare key would be grabbed system-wide.
@@ -140,65 +166,18 @@ pub fn has_modifier(hotkey: &str) -> bool {
         .is_ok_and(|key| !key.mods.is_empty())
 }
 
-/// Splits a stored hotkey such as `Super+Shift+KeyD` into modifiers and key code.
-fn parse(hotkey: &str) -> (Modifiers, Option<String>) {
-    let mut modifiers = Modifiers::empty();
-    let mut code = None;
-    for token in hotkey.split('+').map(str::trim).filter(|t| !t.is_empty()) {
-        match modifier_token(token) {
-            Some(modifier) => modifiers |= modifier,
-            None => code = Some(token.to_string()),
-        }
-    }
-    (modifiers, code)
-}
-
 /// Builds the stored hotkey string. Without a key there is no hotkey, so the result is empty.
 fn compose(modifiers: Modifiers, code: Option<&str>) -> String {
     let Some(code) = code else {
         return String::new();
     };
-    let mut parts: Vec<&str> = TOGGLES
+    let mut parts: Vec<&str> = MODIFIERS
         .iter()
         .filter(|(modifier, _)| modifiers.contains(*modifier))
         .map(|(_, label)| *label)
         .collect();
     parts.push(code);
     parts.join("+")
-}
-
-/// Modifier tokens accepted by `global_hotkey::HotKey::from_str`, without the platform-dependent aliases.
-fn modifier_token(token: &str) -> Option<Modifiers> {
-    match token.to_ascii_uppercase().as_str() {
-        "SUPER" | "CMD" | "COMMAND" => Some(Modifiers::SUPER),
-        "CTRL" | "CONTROL" => Some(Modifiers::CONTROL),
-        "ALT" | "OPTION" => Some(Modifiers::ALT),
-        "SHIFT" => Some(Modifiers::SHIFT),
-        _ => None,
-    }
-}
-
-/// True when the toggles can show the stored hotkey exactly: at most one key, no repeated modifier,
-/// and a string that `HotKey` parses.
-fn is_representable(hotkey: &str) -> bool {
-    let trimmed = hotkey.trim();
-    if trimmed.is_empty() {
-        return true;
-    }
-    let mut keys = 0;
-    let mut seen = Modifiers::empty();
-    for token in trimmed.split('+').map(str::trim) {
-        match modifier_token(token) {
-            Some(modifier) => {
-                if seen.contains(modifier) {
-                    return false;
-                }
-                seen |= modifier;
-            }
-            None => keys += 1,
-        }
-    }
-    keys == 1 && trimmed.parse::<HotKey>().is_ok()
 }
 
 /// Text shown on the key button, e.g. `KeyD` as `D`.
@@ -314,15 +293,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compose_and_parse_roundtrip() {
-        let (modifiers, code) = parse("Super+Shift+KeyD");
-        assert_eq!(modifiers, Modifiers::SUPER | Modifiers::SHIFT);
-        assert_eq!(code.as_deref(), Some("KeyD"));
-        assert_eq!(compose(modifiers, code.as_deref()), "Super+Shift+KeyD");
-
-        let (modifiers, code) = parse("Ctrl+Alt+F5");
-        assert_eq!(modifiers, Modifiers::CONTROL | Modifiers::ALT);
-        assert_eq!(compose(modifiers, code.as_deref()), "Ctrl+Alt+F5");
+    fn records_held_modifiers_in_stored_order() {
+        let held = egui::Modifiers {
+            alt: true,
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            compose(modifiers(held, true), Some("KeyD")),
+            "Super+Alt+Shift+KeyD"
+        );
+        assert!(modifiers(egui::Modifiers::default(), false).is_empty());
+        let ctrl = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        assert_eq!(compose(modifiers(ctrl, false), Some("F5")), "Ctrl+F5");
+        assert_eq!(label("Super+Alt+KeyD"), "Super+Alt+D");
+        assert_eq!(label("Ctrl+Digit1"), "Ctrl+1");
     }
 
     #[test]
@@ -378,16 +367,5 @@ mod tests {
             .find(|key| *key != Key::Escape && key_code(*key).is_none())
             .expect("egui has keys without a hotkey code");
         assert_eq!(press_outcome(unmapped), Press::Unsupported);
-    }
-
-    #[test]
-    fn representable_only_for_single_key_hotkeys() {
-        assert!(is_representable(""));
-        assert!(is_representable("Super+Shift+KeyD"));
-        assert!(is_representable("KeyD"));
-        assert!(!is_representable("Super+Super+KeyD"));
-        assert!(!is_representable("Super+KeyD+KeyE"));
-        assert!(!is_representable("Super"));
-        assert!(!is_representable("Super+NotAKey"));
     }
 }

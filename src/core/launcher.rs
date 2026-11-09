@@ -115,11 +115,16 @@ pub fn launch(view: View, events: Sender<String>) {
                     .and_then(|app| app_locks.get(&app.application.id));
                 let events = events.clone();
                 scope.spawn(move || {
-                    let result = if let Some(window) = reused {
-                        backend
-                            .position(&window, &monitor, zone.bounds.pixels(&monitor))
-                            .map(|()| true)
-                    } else {
+                    let bounds = zone.bounds.pixels(&monitor);
+                    if let Some(window) = reused {
+                        let message = match backend.position(&window, &monitor, bounds) {
+                            Ok(()) => format!("{}: existing window arranged", zone.name),
+                            Err(error) => format!("{}: {error}", zone.name),
+                        };
+                        let _ = events.send(message);
+                        return;
+                    }
+                    let placed = {
                         let _guard = app_lock
                             .map(|lock| lock.lock().unwrap_or_else(|error| error.into_inner()));
                         launch_new(
@@ -130,14 +135,16 @@ pub fn launch(view: View, events: Sender<String>) {
                             &monitor,
                             run,
                         )
-                        .map(|()| false)
                     };
-                    let message = match result {
-                        Ok(true) => format!("{}: existing window arranged", zone.name),
-                        Ok(false) => format!("{}: positioned", zone.name),
-                        Err(error) => format!("{}: {error}", zone.name),
-                    };
-                    let _ = events.send(message);
+                    match placed {
+                        Ok(window) => {
+                            let _ = events.send(format!("{}: positioned", zone.name));
+                            settle(backend, &window, &monitor, bounds);
+                        }
+                        Err(error) => {
+                            let _ = events.send(format!("{}: {error}", zone.name));
+                        }
+                    }
                 });
             }
         });
@@ -202,6 +209,26 @@ fn app_lock_keys<'a>(apps: impl IntoIterator<Item = Option<&'a str>>) -> HashSet
     apps.into_iter().flatten().map(str::to_string).collect()
 }
 
+/// Pauses before re-applying the placement of a newly opened window.
+const SETTLE_MS: [u64; 3] = [250, 500, 1000];
+
+/// Freshly started apps (e.g. Ptyxis with restore-window-size, Zen) may apply
+/// their saved size or position after the window first appears, overriding
+/// the zone. Re-apply it a few times; stop once the window is gone.
+fn settle(
+    backend: Backend,
+    window: &linux::Window,
+    monitor: &super::monitor::Monitor,
+    bounds: (i32, i32, u32, u32),
+) {
+    for pause in SETTLE_MS {
+        thread::sleep(Duration::from_millis(pause));
+        if backend.position(window, monitor, bounds).is_err() {
+            return;
+        }
+    }
+}
+
 fn launch_new(
     index: usize,
     zone: &super::config::Zone,
@@ -209,7 +236,7 @@ fn launch_new(
     matcher: Option<&matching::AppMatcher>,
     monitor: &super::monitor::Monitor,
     run: Run,
-) -> Result<(), String> {
+) -> Result<linux::Window, String> {
     let script = script(zone);
     // Checked under the app lock so a same-app zone that just launched is already visible.
     let app_running = match matcher {
@@ -302,7 +329,8 @@ fn launch_new(
             if let Some(window) = window {
                 return run
                     .backend
-                    .position(&window, monitor, zone.bounds.pixels(monitor));
+                    .position(&window, monitor, zone.bounds.pixels(monitor))
+                    .map(|()| window);
             }
         }
         if let Ok(status) = exit_rx.try_recv() {
