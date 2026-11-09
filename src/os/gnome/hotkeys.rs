@@ -12,17 +12,22 @@ pub struct Hotkeys {
     commands: Sender<(u64, Vec<(usize, String)>)>,
     triggers: Receiver<(u64, usize)>,
     generation: u64,
+    worker: Option<thread::JoinHandle<()>>,
 }
+
+/// Generation that tells the worker to release its grabs and stop.
+const SHUTDOWN: u64 = u64::MAX;
 
 impl Hotkeys {
     pub fn new(events: Sender<String>) -> Self {
         let (commands, command_rx) = mpsc::channel();
         let (trigger_tx, triggers) = mpsc::channel();
-        thread::spawn(move || worker(command_rx, trigger_tx, events));
+        let worker = thread::spawn(move || worker(command_rx, trigger_tx, events));
         Self {
             commands,
             triggers,
             generation: 0,
+            worker: Some(worker),
         }
     }
 
@@ -44,6 +49,16 @@ impl Hotkeys {
             }
         }
         None
+    }
+}
+
+impl Drop for Hotkeys {
+    // Release the grabs now; otherwise the next instance waits for the extension's heartbeat expiry.
+    fn drop(&mut self) {
+        let _ = self.commands.send((SHUTDOWN, Vec::new()));
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -70,6 +85,10 @@ fn worker(
         } else {
             Duration::from_secs(2)
         }) {
+            Ok((SHUTDOWN, _)) | Err(RecvTimeoutError::Disconnected) => {
+                let _ = call::<Value>(json!({"operation":"release", "token":token}));
+                return;
+            }
             Ok((next_generation, bindings)) => {
                 generation = next_generation;
                 desired.clear();
@@ -87,10 +106,6 @@ fn worker(
                 let _ = call::<Value>(json!({"operation":"release", "token":token}));
                 connected = false;
                 last_error = None;
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                let _ = call::<Value>(json!({"operation":"release", "token":token}));
-                return;
             }
             Err(RecvTimeoutError::Timeout) => {}
         }
@@ -220,6 +235,7 @@ mod tests {
             commands,
             triggers,
             generation: 1,
+            worker: None,
         };
         hotkeys.configure(&[]);
         tx.send((1, 0)).unwrap();

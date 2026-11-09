@@ -12,7 +12,7 @@ cargo build --release --locked
 ./target/release/herdctrl
 ```
 
-Install a stable Rust toolchain using rustup before building. X11 runtime tools are `xrandr`, `wmctrl`, and GNU `timeout`. GNOME/Wayland uses `gdbus` (Ubuntu package `libglib2.0-bin`) and GNU `timeout` instead of `wmctrl`. The current Rust GUI renders through X11/XWayland and system OpenGL libraries; the GNOME bridge can control both native Wayland and XWayland windows. This application has no Electron or Node.js runtime.
+Install a stable Rust toolchain using rustup before building. X11 runtime tools are `xrandr`, `wmctrl`, and GNU `timeout`. GNOME/Wayland talks to the Shell extension over the session D-Bus directly instead of using `wmctrl`; `scripts/check-gnome.py` additionally needs `gdbus` (Ubuntu package `libglib2.0-bin`). The current Rust GUI renders through X11/XWayland and system OpenGL libraries; the GNOME bridge can control both native Wayland and XWayland windows. This application has no Electron or Node.js runtime.
 
 ## GNOME 50 / Wayland setup
 
@@ -63,9 +63,15 @@ The test also requires `xprop` and `xwininfo` from `x11-utils`. It opens labels 
 2. Select **Draw a zone**, then drag a rectangle on a display. The application picker opens automatically.
 3. Search for an installed application and select it, or press Enter to select the first search result. Its name appears on the zone. Select a zone and use **Change…** to choose another app. Drag zones within a monitor or directly onto another monitor; resize with the bottom-right handle. A transfer keeps the relative size and application assignment, updates the Monitor property, and snaps into free space on the destination. A full destination leaves the zone at its last valid position; Escape restores the original monitor and bounds. **Advanced** contains optional custom commands, launch delay and numeric bounds (fractions from 0 to 1).
 4. Optionally assign a global hotkey: toggle the modifiers (Super, Ctrl, Alt, Shift), click **Set key…** and press the key. Escape cancels recording; focusing a text field stops it; unsupported keys show a hint. **Clear** removes the hotkey. At least one modifier is required. The layout stores it as text such as `Super+Shift+KeyD`.
-5. Save layouts to activate the hotkey bindings, then launch the selected view. Keep HerdCtrl running for global shortcuts to work. The desktop may already reserve a shortcut; registration failures appear in Activity.
+5. Save layouts, then launch the selected view. The tray process picks up saved hotkeys within about a second.
 
-**Delete view** asks for confirmation. Remaining views keep working hotkeys immediately; this re-registration uses the current, possibly unsaved hotkey settings of the remaining views. The deletion is written to disk when you save.
+**Delete view** asks for confirmation. The deletion, and the changed hotkey assignment of the remaining views, takes effect when you save.
+
+### Tray and global hotkeys
+
+Global hotkeys are owned by a small background process, `herdctrl --tray`, with an icon in the top bar (on GNOME this needs the AppIndicator extension, enabled by default on Ubuntu). It has no editor window or renderer, so it stays running with little memory after you close the editor. Starting `herdctrl` opens the editor and starts the tray if it is not running yet; saving layouts restarts it if you quit it. The tray reloads `layouts.json` when it changes.
+
+The tray menu lists every view with its hotkey to launch it, plus **Edit layouts…**, **Start at login** (writes or removes `~/.config/autostart/herdctrl.desktop`) and **Quit HerdCtrl**. Only one tray and one editor run per layouts file; a second start exits. Successful placements stay quiet; launch errors, taken shortcuts and configuration errors appear as desktop notifications. The desktop may already reserve a shortcut.
 
 **Duplicate view** in the sidebar copies the selected view and opens the copy for editing. It keeps all zones, apps, terminal programs, monitor assignments and bounds. Copies get a unique name and an empty hotkey to avoid shortcut conflicts. Edit the name as needed, then Save layouts.
 

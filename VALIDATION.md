@@ -7,7 +7,7 @@
 | 4.1 Multi-monitor geometry | Spatially ordered monitor numbers now match the canvas, dropdown and temporary physical-screen labels. Four GNOME label positions, timed cleanup and cancellation verified. XRandR discovery includes offsets; full scaling/rotation acceptance remains open. |
 | 4.2 Visual zone editor | Default snapping to borders, halves/thirds/quarters and neighbouring edges, collision prevention, guides, existing-overlap warnings and Align edges added. Headless real-pointer tests cover drawing, moving and resizing. App picker/terminal configuration remains available. |
 | 4.3 Profiles and persistence | Named views, JSON serialization, validation, private atomic saves and malformed-config rejection. Existing command layouts load; selected app ID/name persists. New roundtrip and real GUI save checks passed. |
-| 4.4 Dashboard and global shortcuts | GUI launch button and global shortcut activation passed on GNOME 50.1; shortcut sent through Mutter's virtual keyboard with a separate GTK Wayland test window open. Physical keypress and shortcut conflict acceptance remain open. |
+| 4.4 Dashboard and global shortcuts | Hotkeys now live in the `--tray` process (see "Tray process — 2026-11-09"). Earlier: GUI launch button and global shortcut activation passed on GNOME 50.1; shortcut sent through Mutter's virtual keyboard with a separate GTK Wayland test window open. Physical keypress and shortcut conflict acceptance remain open. |
 | 4.5 Launch and move engine | Reuses identifiable existing application/terminal windows, starts missing ones and reserves each window once per view. Real Zen/herdr reuse and a fresh terminal program with an actual TTY passed, including repeated launches. Four-monitor Wayland/XWayland launch/resize tests also pass. Separate X11-session acceptance remains open. |
 | 4.6 GNOME / Wayland | Extension active and bridge connected on GNOME 50.1. Live engine, GUI launch and compositor shortcut tests pass. Native absolute origin, fractional scaling, real hotplug, unrelated-window geometry and extension recovery remain open. |
 | 5 Structure | Separate core, UI and Linux OS modules. Editable SVG icon and exported 256-pixel PNG provided; PNG is embedded in the native window. Desktop icon presentation remains unverified. |
@@ -216,5 +216,27 @@ Changes after the review of the GNOME/app-picker baseline (`f925206`):
 - Structure: the zone property editor moved to `src/ui/zone_editor.rs` without behaviour change.
 - Checks: `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (56 passed, seven opt-in integration tests ignored) and `cargo build --release --locked` passed.
 - Final independent review (Fable) findings fixed: all launches of the same selected application are serialized, including terminal zones with a program, and windows of shared terminal server processes are matched by launch order (`script_matches_marker_or_shared_process`, `every_selected_app_gets_a_lock_key`); a running app without a new-window action now reports that no second window opened instead of a generic timeout; hotkeys without a modifier are rejected on save, skipped on X11 registration and refused by the GNOME accelerator conversion (`has_modifier_requires_a_parsed_modifier`); the recorder stops when a text field takes focus and flags unsupported keys (`press_outcome_cancels_captures_or_flags_unsupported_keys`). Checks: fmt, clippy with warnings denied, 59 tests passed (seven opt-in integration tests ignored), release build.
-- Known limits: deleting a view re-registers the remaining views' current (possibly unsaved) hotkeys. An application zone and a custom command for the same program in one view can receive each other's windows. Serializing same-app zones adds up to launch delay + 5 s per zone. `scripts/measure-rss.sh` waits for any window named HerdCtrl, so another open HerdCtrl instance makes it sample too early.
+- Known limits: An application zone and a custom command for the same program in one view can receive each other's windows. Serializing same-app zones adds up to launch delay + 5 s per zone. `scripts/measure-rss.sh` waits for any window named HerdCtrl, so another open HerdCtrl instance makes it sample too early.
 - Not verified on a real desktop: two zones of the same single-instance app (e.g. two Zen or Nautilus windows), two terminals with different programs in one view, the hotkey recorder and the delete dialog, GNOME Console/GNOME Terminal zones with different programs, and an already-running app without a new-window action. These need a live GNOME 50 / X11 check.
+
+## Tray process — 2026-11-09
+
+User-requested scope extension (PRD 4.4 "Tray Process", removed from section 7 Future Scope): a background process that only listens for hotkeys and sits in the tray.
+
+- `herdctrl --tray` runs without eframe/egui. It owns the global hotkeys (GNOME bridge or X11 `global-hotkey`), polls `layouts.json` metadata once per second and reloads on change, and launches views through the existing launch engine. The tray icon is a StatusNotifierItem via `ksni` 0.3.7 (async-io executor, no tokio). Errors are sent as desktop notifications over D-Bus.
+- The editor no longer registers hotkeys. It starts the tray on launch and after each save if none is running. Per-layouts-file locks in `$XDG_RUNTIME_DIR` keep one tray and one editor. This removes the earlier limit where deleting a view re-registered unsaved hotkeys.
+- GNOME bridge calls now use one in-process `zbus` session connection (1 s method timeout) instead of starting `gdbus` per call. Hotkey polling every 150 ms therefore no longer spawns processes. The worker releases its grabs on shutdown, so a restarted tray can bind at once.
+- `scripts/measure-rss.sh` and `scripts/check-x11.py` also stop the tray child that the editor starts for their throwaway configuration.
+
+Measured on GNOME 50 Wayland (this machine), release build 6,573,512 bytes (was 4,900,320; ksni/zbus add about 1.7 MB, still under 15 MB):
+
+| Tray state | VmRSS | RssAnon | Threads | CPU |
+| --- | --- | --- | --- | --- |
+| No hotkeys configured, 5 s after start | 8,584 KiB | 1,820 KiB | 7 | – |
+| One hotkey bound (isolated test config), 60 s after start | 8,624 KiB | 1,832 KiB | 7 | 80 ms over 30 s (≈0.27 % of one core) |
+
+Live checks passed: the tray registered with the StatusNotifierWatcher (Ubuntu AppIndicator extension); the menu showed `Test__View   Super+Shift+F12` (underscore escaped), Edit layouts…, Start at login (unchecked) and Quit; the GNOME shortcut binding was accepted without errors; Quit through the D-Bus menu exited within 1.5 s; a second `--tray` start exited with "already running".
+
+Checks: `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (62 passed, seven opt-in integration tests ignored), `cargo build --release --locked`, `bash -n scripts/measure-rss.sh`.
+
+Not verified yet: a physical hotkey press triggering a view through the tray, Edit layouts… / left click opening the editor, Start at login across a real re-login, the notification display, and the X11 session path. Without the AppIndicator extension GNOME shows no icon; hotkeys still work, but the tray can then only be quit by ending the process. The tray's RSS figure does not change the editor's PRD 6 RAM result above.

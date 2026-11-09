@@ -1,8 +1,10 @@
-//! Session D-Bus calls are only made by launch/discovery/shortcut workers.
-use super::linux::{self, Window};
+//! Session D-Bus calls are only made by launch/discovery/shortcut/tray workers.
+use super::linux::Window;
 use crate::core::monitor::Monitor;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
+use std::{sync::Mutex, time::Duration};
+use zbus::blocking::{connection, Connection};
 
 pub mod hotkeys;
 
@@ -14,18 +16,46 @@ pub struct State {
 
 pub fn call<T: DeserializeOwned>(mut request: Value) -> Result<T, String> {
     request["version"] = json!(1);
-    let raw = linux::output("gdbus", &[
-        "call", "--session", "--timeout", "1", "--dest", "org.gnome.Shell",
-        "--object-path", "/org/gnome/Shell/Extensions/HerdCtrl",
-        "--method", "org.gnome.Shell.Extensions.HerdCtrl.Call", &request.to_string(),
-    ]).map_err(|e| format!("GNOME bridge unavailable. Install it with `bash scripts/install-gnome-extension.sh`, enable HerdCtrl in Extensions, then Refresh displays. {e}"))?;
+    let raw = bridge(&request.to_string()).map_err(|e| format!("GNOME bridge unavailable. Install it with `bash scripts/install-gnome-extension.sh`, enable HerdCtrl in Extensions, then Refresh displays. {e}"))?;
     decode_reply(&raw)
 }
 
-fn decode_reply<T: DeserializeOwned>(raw: &str) -> Result<T, String> {
-    let text = tuple_string(raw)?;
+// One shared session-bus connection: hotkey polling must not spawn a helper
+// process several times per second.
+fn bridge(request: &str) -> Result<String, String> {
+    static CONNECTION: Mutex<Option<Connection>> = Mutex::new(None);
+    let mut slot = CONNECTION.lock().unwrap_or_else(|e| e.into_inner());
+    let connection = match slot.as_ref() {
+        Some(connection) => connection.clone(),
+        None => {
+            let connection = connection::Builder::session()
+                .map_err(|e| e.to_string())?
+                .method_timeout(Duration::from_secs(1))
+                .build()
+                .map_err(|e| e.to_string())?;
+            slot.insert(connection).clone()
+        }
+    };
+    drop(slot);
+    let reply = connection
+        .call_method(
+            Some("org.gnome.Shell"),
+            "/org/gnome/Shell/Extensions/HerdCtrl",
+            Some("org.gnome.Shell.Extensions.HerdCtrl"),
+            "Call",
+            &(request,),
+        )
+        .and_then(|reply| reply.body().deserialize::<String>());
+    if let Err(zbus::Error::InputOutput(_)) = &reply {
+        // Reconnect on the next call, e.g. after the session bus restarted.
+        *CONNECTION.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    reply.map_err(|e| e.to_string())
+}
+
+fn decode_reply<T: DeserializeOwned>(text: &str) -> Result<T, String> {
     let response: Value =
-        serde_json::from_str(&text).map_err(|e| format!("Invalid GNOME bridge response: {e}"))?;
+        serde_json::from_str(text).map_err(|e| format!("Invalid GNOME bridge response: {e}"))?;
     if response.get("ok") != Some(&Value::Bool(true)) {
         return Err(response
             .get("error")
@@ -40,62 +70,6 @@ fn decode_reply<T: DeserializeOwned>(raw: &str) -> Result<T, String> {
             .ok_or("GNOME bridge response has no result")?,
     )
     .map_err(|e| format!("Invalid GNOME bridge result: {e}"))
-}
-
-// gdbus prints a GVariant single-string tuple, with either quote style and
-// C escapes. Decode that outer layer before parsing the inner JSON.
-fn tuple_string(raw: &str) -> Result<String, String> {
-    let invalid = || "Invalid gdbus string tuple".to_string();
-    let content = raw
-        .trim()
-        .strip_prefix('(')
-        .and_then(|s| s.strip_suffix(')'))
-        .ok_or_else(invalid)?
-        .trim();
-    let mut chars = content.chars();
-    let quote = chars
-        .next()
-        .filter(|c| *c == '\'' || *c == '"')
-        .ok_or_else(invalid)?;
-    let mut result = String::new();
-    while let Some(ch) = chars.next() {
-        if ch == quote {
-            if chars.as_str().trim() == "," {
-                return Ok(result);
-            }
-            return Err(invalid());
-        }
-        if ch != '\\' {
-            result.push(ch);
-            continue;
-        }
-        match chars.next().ok_or_else(invalid)? {
-            '\\' => result.push('\\'),
-            '\'' => result.push('\''),
-            '"' => result.push('"'),
-            'n' => result.push('\n'),
-            'r' => result.push('\r'),
-            't' => result.push('\t'),
-            'b' => result.push('\u{8}'),
-            'f' => result.push('\u{c}'),
-            'v' => result.push('\u{b}'),
-            kind @ ('u' | 'U' | 'x') => {
-                let count = match kind {
-                    'u' => 4,
-                    'U' => 8,
-                    _ => 2,
-                };
-                let hex: String = chars.by_ref().take(count).collect();
-                if hex.len() != count {
-                    return Err(invalid());
-                }
-                let code = u32::from_str_radix(&hex, 16).map_err(|_| invalid())?;
-                result.push(char::from_u32(code).ok_or_else(invalid)?);
-            }
-            _ => return Err(invalid()),
-        }
-    }
-    Err(invalid())
 }
 
 pub fn state() -> Result<State, String> {
@@ -132,26 +106,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decodes_gvariant_quotes_escapes_and_unicode() {
-        assert_eq!(
-            tuple_string("('a\\'b\\\\c\\n😀',)\n").unwrap(),
-            "a'b\\c\n😀"
-        );
-        assert_eq!(tuple_string(r#"("a\"b",)"#).unwrap(), "a\"b");
-        assert_eq!(tuple_string(r"('\u00e4\U0001f600',)").unwrap(), "ä😀");
-        for malformed in ["()", "('unfinished,)", "('x', 'y')", "('\\q',)"] {
-            assert!(tuple_string(malformed).is_err(), "{malformed}");
-        }
-    }
-
-    #[test]
     fn rejects_bridge_errors_and_wrong_schemas() {
         assert_eq!(
-            decode_reply::<Value>(r#"('{"ok":false,"error":"Disconnected"}',)"#).unwrap_err(),
+            decode_reply::<Value>(r#"{"ok":false,"error":"Disconnected"}"#).unwrap_err(),
             "Disconnected"
         );
-        assert!(decode_reply::<State>(r#"('{"ok":true,"result":[]}',)"#).is_err());
-        let state: State = decode_reply(r#"('{"ok":true,"result":{"monitors":[{"name":"DP-1","x":-1280,"y":0,"width":1280,"height":720,"scale":1.5}],"windows":[{"id":"42","pid":123}]}}',)"#).unwrap();
+        assert!(decode_reply::<State>(r#"{"ok":true,"result":[]}"#).is_err());
+        let state: State = decode_reply(r#"{"ok":true,"result":{"monitors":[{"name":"DP-1","x":-1280,"y":0,"width":1280,"height":720,"scale":1.5}],"windows":[{"id":"42","pid":123}]}}"#).unwrap();
         assert_eq!(state.monitors[0].x, -1280);
         assert_eq!(state.windows[0].pid, 123);
     }

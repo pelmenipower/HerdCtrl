@@ -72,7 +72,9 @@ for ((run = 1; run <= total; run++)); do
         exit 1
     fi
     sample="$(read_rss "$pid")"
-    kill "$pid" 2>/dev/null
+    # The editor starts a tray child for this throwaway configuration; stop it too.
+    tray="$(pgrep -P "$pid" -f -- '--tray' || true)"
+    kill "$pid" $tray 2>/dev/null
     wait "$pid" 2>/dev/null
     if [[ $run -eq 1 ]]; then
         echo "warm-up (excluded): VmRSS/RssAnon/RssFile/RssShmem KiB = $sample"

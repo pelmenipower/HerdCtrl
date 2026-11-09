@@ -45,6 +45,11 @@ def visible_window(process):
 
 def stop(process):
     if process and process.poll() is None:
+        # The editor starts a tray child for the temporary configuration; stop it too.
+        trays = subprocess.run(["pgrep", "-P", str(process.pid), "-f", "--", "--tray"],
+                               capture_output=True, text=True).stdout.split()
+        for pid in trays:
+            subprocess.run(["kill", pid], check=False)
         process.terminate()
         try:
             process.wait(timeout=3)

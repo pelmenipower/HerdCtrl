@@ -12,10 +12,10 @@ use crate::{
         launcher,
         monitor::{sort_for_display, Monitor},
     },
-    os::{gnome, Backend},
+    os::Backend,
 };
 use eframe::egui::{self, Color32, RichText};
-use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+use global_hotkey::hotkey::HotKey;
 use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
@@ -34,10 +34,7 @@ pub struct Dashboard {
     selected_view: usize,
     selected_zone: Option<usize>,
     canvas: Canvas,
-    hotkeys: Option<GlobalHotKeyManager>,
-    gnome_hotkeys: Option<gnome::hotkeys::Hotkeys>,
     backend: Backend,
-    bindings: Vec<(HotKey, usize)>,
     dirty: bool,
     close_dialog: bool,
     applications: Vec<InstalledApp>,
@@ -52,7 +49,12 @@ pub struct Dashboard {
 }
 
 impl Dashboard {
-    pub fn new(cc: &eframe::CreationContext<'_>, config: Config, path: PathBuf) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        config: Config,
+        path: PathBuf,
+        tray_error: Option<String>,
+    ) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style()).clone();
         style.spacing.item_spacing = egui::vec2(10.0, 10.0);
@@ -66,14 +68,11 @@ impl Dashboard {
             .first()
             .and_then(|view| (!view.zones.is_empty()).then_some(0));
         let backend = Backend::detect();
-        let manager = if backend == Backend::X11 {
-            Some(GlobalHotKeyManager::new())
-        } else {
-            None
-        };
         let mut log = vec!["Ready. Draw zones, choose applications, then save your view.".into()];
-        if let Some(Err(e)) = &manager {
-            log.push(format!("Global hotkeys unavailable: {e}"));
+        if let Some(e) = tray_error {
+            log.push(format!(
+                "Tray could not start, so hotkeys are inactive: {e}"
+            ));
         }
         let mut app = Self {
             config,
@@ -82,16 +81,12 @@ impl Dashboard {
             monitor_rx,
             monitor_tx,
             messages,
-            gnome_hotkeys: (backend == Backend::Gnome)
-                .then(|| gnome::hotkeys::Hotkeys::new(events.clone())),
             backend,
             events,
             log,
             selected_view: 0,
             selected_zone,
             canvas: Canvas::default(),
-            hotkeys: manager.and_then(Result::ok),
-            bindings: Vec::new(),
             dirty: false,
             close_dialog: false,
             applications: Vec::new(),
@@ -105,7 +100,6 @@ impl Dashboard {
             hotkey_recorder: Recorder::default(),
         };
         app.refresh();
-        app.register_hotkeys();
         app.refresh_applications();
         app
     }
@@ -161,37 +155,6 @@ impl Dashboard {
         }
     }
 
-    fn register_hotkeys(&mut self) {
-        if let Some(hotkeys) = &mut self.gnome_hotkeys {
-            hotkeys.configure(&self.config.views);
-            return;
-        }
-        let Some(manager) = &self.hotkeys else {
-            return;
-        };
-        for (key, _) in self.bindings.drain(..) {
-            let _ = manager.unregister(key);
-        }
-        for (index, view) in self.config.views.iter().enumerate() {
-            if view.hotkey.trim().is_empty() {
-                continue;
-            }
-            match view.hotkey.parse::<HotKey>() {
-                Ok(key) if key.mods.is_empty() => self.log.push(format!(
-                    "{} hotkey needs at least one modifier (Super, Ctrl, Alt or Shift)",
-                    view.name
-                )),
-                Ok(key) => match manager.register(key) {
-                    Ok(()) => self.bindings.push((key, index)),
-                    Err(e) => self
-                        .log
-                        .push(format!("{} hotkey unavailable: {e}", view.name)),
-                },
-                Err(e) => self.log.push(format!("{} hotkey invalid: {e}", view.name)),
-            }
-        }
-    }
-
     fn delete_view(&mut self, index: usize) {
         if index >= self.config.views.len() {
             return;
@@ -207,8 +170,6 @@ impl Dashboard {
         self.app_picker = None;
         reset_canvas(&mut self.canvas);
         self.dirty = true;
-        // Indices changed, so every remaining view needs its hotkey bound to its new index.
-        self.register_hotkeys();
     }
 
     fn show_delete_view_dialog(&mut self, ctx: &egui::Context) {
@@ -263,8 +224,15 @@ impl Dashboard {
         match self.config.save(&self.path) {
             Ok(()) => {
                 self.dirty = false;
-                self.log.push("Layouts saved".into());
-                self.register_hotkeys();
+                // The tray reloads the file and rebinds the hotkeys; restart it if it was quit.
+                match crate::tray::ensure_running() {
+                    Ok(()) => self
+                        .log
+                        .push("Layouts saved. The tray applies the hotkeys.".into()),
+                    Err(e) => self.log.push(format!(
+                        "Layouts saved, but the tray could not start, so hotkeys are inactive: {e}"
+                    )),
+                }
             }
             Err(e) => self.log.push(format!("Save failed: {e}")),
         }
@@ -330,19 +298,6 @@ impl eframe::App for Dashboard {
         }
         while let Ok(message) = self.messages.try_recv() {
             self.log.push(message);
-        }
-        if let Some(hotkeys) = &self.gnome_hotkeys {
-            while let Some(index) = hotkeys.take_trigger() {
-                self.run(index);
-            }
-        }
-        while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-            if event.state == HotKeyState::Pressed {
-                if let Some((_, index)) = self.bindings.iter().find(|(key, _)| key.id() == event.id)
-                {
-                    self.run(*index);
-                }
-            }
         }
         if self.log.len() > 100 {
             self.log.drain(..self.log.len() - 100);

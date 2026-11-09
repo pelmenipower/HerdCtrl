@@ -53,6 +53,7 @@ Power users, developers, and sysadmins who frequently open complex setups (e.g.,
 ### 4.4. Triggering Mechanisms
 * **Dashboard Launcher:** Visual buttons inside the HerdCtrl GUI to launch any View instantly.
 * **Global Hotkeys:** Assign custom key combinations (e.g., `Super + Shift + C`) to trigger specific views globally, even when HerdCtrl is running in the background.
+* **Tray Process (user-approved scope extension):** A lightweight background process without an editor window owns the global hotkeys and shows a system tray icon (StatusNotifierItem). Its menu launches views, opens the editor, toggles start at login and quits. It reloads the configuration after saving and reports errors as desktop notifications.
 
 ### 4.5. The Launch & Move Engine (Linux/Ubuntu X11 Execution Pipeline)
 Upon triggering a View:
@@ -84,6 +85,7 @@ herdctrl/
 │   └── icon.png
 └── src/
     ├── main.rs           # Application entrypoint & event loop
+    ├── tray.rs           # Background tray process & global hotkeys
     ├── ui/
     │   ├── mod.rs        # UI module routing
     │   ├── canvas.rs     # Interactive monitor canvas & zone drawing logic
@@ -114,4 +116,3 @@ herdctrl/
 * macOS support via Accessibility API (`AXUIElement`).
 * Windows support via Win32 API (`SetWindowPos`).
 * Additional Wayland compositor integrations (e.g., Hyprland / KDE Plasma IPC); GNOME 50 is covered by section 4.6.
-* Tray Icon / Minimization to system notification area.
