@@ -1,3 +1,4 @@
+use super::theme;
 use eframe::egui::{self, Color32, Key};
 use global_hotkey::hotkey::{HotKey, Modifiers};
 
@@ -7,6 +8,20 @@ pub struct Recorder {
     recording: bool,
     /// Why the last key press was not stored; recording continues with this hint.
     hint: Option<&'static str>,
+}
+
+impl Recorder {
+    pub fn is_recording(&self) -> bool {
+        self.recording
+    }
+
+    #[cfg(test)]
+    pub fn recording() -> Self {
+        Self {
+            recording: true,
+            hint: None,
+        }
+    }
 }
 
 /// What a single key press does while recording.
@@ -72,26 +87,74 @@ pub fn show(ui: &mut egui::Ui, recorder: &mut Recorder, hotkey: &mut String) -> 
     }
 
     let mut clear = false;
-    ui.horizontal(|ui| {
-        let text = if recorder.recording {
-            "Press the shortcut…".to_string()
-        } else if hotkey.trim().is_empty() {
-            "Record hotkey…".to_string()
-        } else {
-            label(hotkey)
-        };
-        let button = ui.add(egui::Button::new(text).selected(recorder.recording));
-        if button.clicked() && !recorder.recording {
-            recorder.recording = true;
-        }
-        button.on_hover_text(
-            "Click, then press the whole combination, e.g. Super+Alt+D. Escape cancels.",
-        );
-        if !hotkey.is_empty() && ui.button("Clear").clicked() {
-            clear = true;
-        }
-        if let Some(hint) = recorder.hint.filter(|_| recorder.recording) {
-            ui.colored_label(Color32::from_rgb(244, 160, 110), hint);
+    let p = theme::palette(ui.ctx());
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        let frame = egui::Frame::NONE
+            .fill(if recorder.recording {
+                p.accent_soft
+            } else {
+                Color32::TRANSPARENT
+            })
+            .stroke(egui::Stroke::new(1.0_f32,
+                if recorder.recording {
+                    p.accent
+                } else {
+                    Color32::TRANSPARENT
+                },
+            ))
+            .corner_radius(7)
+            .inner_margin(egui::Margin::symmetric(8, 2));
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if recorder.recording {
+                    theme::dot(ui, p.danger);
+                    ui.label("Press the shortcut…");
+                    if theme::ghost(ui, "Cancel").clicked() {
+                        *recorder = Recorder::default();
+                    }
+                } else {
+                    if hotkey.trim().is_empty() {
+                        ui.label(egui::RichText::new("No hotkey").color(p.muted));
+                    } else {
+                        for part in label(hotkey).split('+') {
+                            theme::kbd(ui, part);
+                        }
+                    }
+                    let record = theme::ghost(
+                        ui,
+                        if hotkey.trim().is_empty() {
+                            "Record"
+                        } else {
+                            "Change"
+                        },
+                    )
+                    .on_hover_text(
+                        "Click, then press the whole combination, e.g. Super+Alt+D. Escape cancels.",
+                    );
+                    if record.clicked() {
+                        recorder.recording = true;
+                    }
+                    if !hotkey.is_empty()
+                        && ui
+                            .add(
+                                egui::Button::new(egui::RichText::new("Clear").color(p.muted))
+                                    .frame(false),
+                            )
+                            .clicked()
+                    {
+                        clear = true;
+                    }
+                }
+            });
+        });
+        if recorder.recording {
+            let (text, color) = match recorder.hint {
+                Some(hint) => (hint, p.warn),
+                None => ("Hold modifiers, press a key · Esc cancels", p.muted),
+            };
+            ui.label(egui::RichText::new(text).size(12.0).color(color));
         }
     });
 

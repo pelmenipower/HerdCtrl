@@ -69,7 +69,10 @@ fn gnome_live_launch_and_resize_on_each_monitor() {
             let expected = layout.zones[0].bounds.pixels(monitor);
             let (tx, rx) = mpsc::channel();
             launch(layout, tx);
-            let message = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            let message = rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap()
+                .to_string();
             assert!(message.ends_with(": positioned"), "{backend}: {message}");
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
@@ -120,7 +123,10 @@ fn gnome_live_launch_and_resize_on_each_monitor() {
     }
     let (tx, rx) = mpsc::channel();
     launch(view(&monitors[0].name, "true".into()), tx);
-    let message = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let message = rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap()
+        .to_string();
     assert!(
         message.contains("No new window belonging to this process"),
         "{message}"
@@ -134,7 +140,7 @@ fn gnome_live_launch_and_resize_on_each_monitor() {
         ),
         tx,
     );
-    let message = rx.recv_timeout(Duration::from_secs(4)).unwrap();
+    let message = rx.recv_timeout(Duration::from_secs(4)).unwrap().to_string();
     assert!(message.contains("is disconnected"), "{message}");
     assert!(!marker.exists());
     let output = json!({
@@ -183,7 +189,10 @@ fn gnome_live_terminal_program_has_tty_and_reuses_its_window() {
         .collect();
     let (tx, rx) = mpsc::channel();
     launch(layout.clone(), tx.clone());
-    let first = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let first = rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap()
+        .to_string();
     assert!(first.ends_with(": positioned"), "{first}");
     let deadline = Instant::now() + Duration::from_secs(3);
     while !marker.exists() && Instant::now() < deadline {
@@ -223,7 +232,10 @@ fn gnome_live_terminal_program_has_tty_and_reuses_its_window() {
     launch(layout.clone(), tx.clone());
     launch(layout, tx);
     for _ in 0..2 {
-        let reused = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let reused = rx
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+            .to_string();
         assert!(reused.ends_with(": existing window arranged"), "{reused}");
     }
     let after = Backend::Gnome.windows().unwrap();

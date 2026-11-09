@@ -59,23 +59,24 @@ The test also requires `xprop` and `xwininfo` from `x11-utils`. It opens labels 
 
 ## Use
 
-1. Create a named view.
-2. Select **Draw a zone**, then drag a rectangle on a display. The application picker opens automatically.
-3. Search for an installed application and select it, or press Enter to select the first search result. Its name appears on the zone. Select a zone and use **Change…** to choose another app. Drag zones within a monitor or directly onto another monitor; resize with the bottom-right handle. A transfer keeps the relative size and application assignment, updates the Monitor property, and snaps into free space on the destination. A full destination leaves the zone at its last valid position; Escape restores the original monitor and bounds. **Advanced** contains optional custom commands, launch delay and numeric bounds (fractions from 0 to 1).
-4. Optionally assign a global hotkey: click **Record hotkey…**, then press the whole combination, for example hold Super+Alt and press D. At least one modifier (Super, Ctrl, Alt or Shift) is required; Escape cancels; focusing a text field stops recording; unsupported keys show a hint. **Clear** removes the hotkey. The layout stores it as text such as `Super+Alt+KeyD`. egui does not report Super on Linux, so the recorder asks the X server (the editor runs on X11/XWayland) whether Super is held. Shortcuts the desktop or the running tray already grab never reach the recorder; to record the current combination again, clear it and save first.
-5. Save layouts, then launch the selected view. The tray process picks up saved hotkeys within about a second.
+The editor has four areas: the **views and zones** list on the left, the **canvas** with your monitors in the middle, the selected zone's **properties** on the right, and the **last launch** below the canvas. The top bar shows the session, the GNOME extension and whether the tray is listening for hotkeys; click the tray status to start a stopped tray. The round icon at the top right switches the appearance between system, dark and light; the choice is stored in `~/.config/herdctrl/ui.json`. With **system**, HerdCtrl reads the desktop's light/dark preference from the XDG settings portal at startup.
 
-**Delete view** asks for confirmation. The deletion, and the changed hotkey assignment of the remaining views, takes effect when you save.
+1. Create a view with **+** in the sidebar. On first start, a setup card checks the extension and monitors and offers **Create view** and **Start at login**.
+2. Select **Draw zone**, then drag a rectangle on a monitor. The application picker opens automatically.
+3. Search for an application and select it, or move with ↑↓ and press Enter. Applications already used in a view are listed first; terminals are marked. **Custom command…** opens the zone's advanced section instead. Drag zones within a monitor or onto another monitor; resize with the bottom-right grip. A transfer keeps the relative size and application, updates the monitor, and snaps into free space on the destination. A full destination leaves the zone at its last valid position; Escape restores the original monitor and bounds. In the sidebar, drag zones to change their launch order.
+4. The properties panel edits the zone name, application, program in a terminal, monitor, geometry (percent of the monitor's work area, with the resulting pixels) and launch delay. **Advanced** holds a custom command and Run in terminal.
+5. Optionally assign a global hotkey next to the view name: click **Record**, then press the whole combination, for example hold Super+Alt and press D. At least one modifier (Super, Ctrl, Alt or Shift) is required; Escape or **Cancel** stops recording; focusing a text field stops it too; unsupported keys show a hint. **Clear** removes the hotkey. The layout stores it as text such as `Super+Alt+KeyD`. egui does not report Super on Linux, so the recorder asks the X server (the editor runs on X11/XWayland) whether Super is held. Shortcuts the desktop or the running tray already grab never reach the recorder; to record the current combination again, clear it and save first.
+6. **Save** (Ctrl+S) writes the layouts; the tray picks up saved hotkeys within about a second. **Launch view** starts the selected view. During a launch each zone on the canvas shows *opening…*, *placed* or *failed*, and the panel below lists the result per zone. **Retry zone** launches only the zones that failed. **Show log** shows all messages.
+
+**Delete view** (in the **…** menu) asks for confirmation. The deletion, and the changed hotkey assignment of the remaining views, takes effect when you save. **Duplicate view** copies the selected view without its hotkey.
+
+The interface uses Inter and JetBrains Mono, embedded from `assets/fonts` under the SIL Open Font License 1.1 (license texts beside the fonts).
 
 ### Tray and global hotkeys
 
 Global hotkeys are owned by a small background process, `herdctrl --tray`, with an icon in the top bar (on GNOME this needs the AppIndicator extension, enabled by default on Ubuntu). It has no editor window or renderer, so it stays running with little memory after you close the editor. Starting `herdctrl` opens the editor and starts the tray if it is not running yet; saving layouts restarts it if you quit it. The tray reloads `layouts.json` when it changes.
 
 The tray menu lists every view with its hotkey to launch it, plus **Edit layouts…**, **Start at login** (writes or removes `~/.config/autostart/herdctrl.desktop`) and **Quit HerdCtrl**. Only one tray and one editor run per layouts file; a second start exits. Successful placements stay quiet; launch errors, taken shortcuts and configuration errors appear as desktop notifications. The desktop may already reserve a shortcut.
-
-**Duplicate view** in the sidebar copies the selected view and opens the copy for editing. It keeps all zones, apps, terminal programs, monitor assignments and bounds. Copies get a unique name and an empty hotkey to avoid shortcut conflicts. Edit the name as needed, then Save layouts.
-
-The zone entries below the monitors can be dragged to reorder them within the current view. A marker shows where the entry will land, including across wrapped rows. Click an entry to edit it; press Escape or drop outside the list to cancel a drag. Save layouts to keep the new order. The selected zone, its app and its monitor bounds travel with the entry.
 
 Monitor numbers and connector names appear as small captions above each screen preview, with space between preview rows so captions cannot cover zones. Hover a caption for its resolution.
 
@@ -113,6 +114,12 @@ python3 scripts/package-gnome-extension.py
 ```
 
 CI runs these checks on Ubuntu and uploads the compiled binary and extension bundle as workflow artifacts. Node.js is needed only for the compositor-independent extension tests. CI does not publish releases.
+
+To review the interface without opening a window, render its main states (edit, launching, failed, app picker, hotkey recording, first start; dark and light) to `target/ui-snapshots/*.png`. This opt-in test uses `egui_kittest` with a wgpu adapter and fixed sample data; it does not compare against stored images:
+
+```sh
+cargo test --locked render_ui_snapshots -- --ignored
+```
 
 The window icon is embedded from `assets/icon.png`; `assets/icon.svg` is its editable source. To regenerate the 256-pixel PNG with the optional `librsvg2-bin` development tool:
 

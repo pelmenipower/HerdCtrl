@@ -31,6 +31,7 @@ impl Editor {
                 work_area: None,
             }],
         };
+        crate::ui::theme::install(&editor.context);
         editor.frame(Vec::new());
         editor
     }
@@ -45,8 +46,12 @@ impl Editor {
         };
         let _ = self.context.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                self.canvas
-                    .show(ui, &self.monitors, &mut self.view, &mut self.selected);
+                // The pointer scripts below were written for a 310 px high canvas.
+                let width = ui.available_width();
+                ui.allocate_ui(Vec2::new(width, 314.0), |ui| {
+                    self.canvas
+                        .show(ui, &self.monitors, &mut self.view, &mut self.selected);
+                });
             });
         });
     }

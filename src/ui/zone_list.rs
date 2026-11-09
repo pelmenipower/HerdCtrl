@@ -1,5 +1,6 @@
+use super::theme;
 use crate::core::config::Zone;
-use eframe::egui::{self, Rect};
+use eframe::egui::{self, Align2, FontId, Rect, Sense, Stroke, Vec2};
 
 #[derive(Clone)]
 struct ZoneDrag {
@@ -50,32 +51,84 @@ fn show_list(
     if zones.is_empty() {
         return (false, Vec::new());
     }
-    ui.small("Zones · Drag an entry to change its order");
+    let p = theme::palette(ui.ctx());
     let mut rects = Vec::with_capacity(zones.len());
-    let list = ui.horizontal_wrapped(|ui| {
+    let list = ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
         for (index, zone) in zones.iter().enumerate() {
+            let (rect, response) = ui.allocate_exact_size(
+                Vec2::new(ui.available_width(), 30.0),
+                Sense::click_and_drag(),
+            );
+            let active = *selected == Some(index);
+            if active || response.hovered() {
+                ui.painter().rect(
+                    rect,
+                    6.0,
+                    if active { p.raised } else { p.hover },
+                    Stroke::new(1.0_f32, if active { p.border } else { p.hover }),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            // Paint the grip so it also works with fonts lacking drag-handle glyphs.
+            for x in [9.0, 13.0] {
+                for y in [-4.0, 0.0, 4.0] {
+                    ui.painter().circle_filled(
+                        egui::pos2(rect.left() + x, rect.center().y + y),
+                        1.0_f32,
+                        p.muted,
+                    );
+                }
+            }
+            let badge = Rect::from_center_size(
+                egui::pos2(rect.left() + 30.0, rect.center().y),
+                Vec2::splat(18.0),
+            );
+            ui.painter()
+                .rect_filled(badge, 4.0, if active { p.accent } else { p.raised });
+            ui.painter().text(
+                badge.center(),
+                Align2::CENTER_CENTER,
+                (index + 1).to_string(),
+                FontId::monospace(11.0),
+                if active { p.accent_on } else { p.muted },
+            );
+            let monitor =
+                ui.painter()
+                    .layout_no_wrap(zone.monitor.clone(), FontId::monospace(11.0), p.muted);
+            let monitor_x = rect.right() - monitor.size().x - 8.0;
+            ui.painter().galley(
+                egui::pos2(monitor_x, rect.center().y - monitor.size().y / 2.0),
+                monitor,
+                p.muted,
+            );
             let name = zone
                 .application
                 .as_ref()
                 .map_or(zone.name.as_str(), |app| app.name.as_str());
-            let response = ui.add(
-                egui::Button::new(format!("    {} · {}", index + 1, name))
-                    .wrap_mode(egui::TextWrapMode::Extend)
-                    .selected(*selected == Some(index))
-                    .sense(egui::Sense::click_and_drag()),
+            let mut job = egui::text::LayoutJob::default();
+            job.append(
+                name,
+                0.0,
+                egui::TextFormat::simple(FontId::proportional(13.0), p.text),
             );
-            // Paint the grip so it also works with fonts lacking drag-handle glyphs.
-            let grip_color = ui.style().interact(&response).fg_stroke.color;
-            for x in [6.0, 10.0] {
-                for y in [-3.5, 0.0, 3.5] {
-                    ui.painter().circle_filled(
-                        egui::pos2(response.rect.left() + x, response.rect.center().y + y),
-                        0.8_f32,
-                        grip_color,
-                    );
-                }
+            if !zone.terminal_command.trim().is_empty() {
+                job.append(
+                    &format!(" · {}", zone.terminal_command.trim()),
+                    0.0,
+                    egui::TextFormat::simple(FontId::monospace(12.0), p.muted),
+                );
             }
-            rects.push(response.rect);
+            job.wrap = egui::text::TextWrapping::truncate_at_width(
+                (monitor_x - badge.right() - 16.0).max(10.0),
+            );
+            let galley = ui.fonts(|fonts| fonts.layout_job(job));
+            ui.painter().galley(
+                egui::pos2(badge.right() + 8.0, rect.center().y - galley.size().y / 2.0),
+                galley,
+                p.text,
+            );
+            rects.push(rect);
             if response.clicked() {
                 *selected = Some(index);
             }
@@ -85,14 +138,14 @@ fn show_list(
             });
             response
                 .on_hover_cursor(egui::CursorIcon::Grab)
-                .on_hover_text(format!("{} — drag to reorder; click to edit", zone.name));
+                .on_hover_text(format!("{} — drag to change the launch order", zone.name));
         }
     });
     let mut changed = false;
     if let Some(payload) = egui::DragAndDrop::payload::<ZoneDrag>(ui.ctx()) {
         if payload.view == view && payload.source < zones.len() {
             if let Some(pointer) = ui.ctx().pointer_interact_pos() {
-                // Use the nearest chip, including inter-chip gaps and wrapped rows.
+                // Use the nearest row, including the gaps between rows.
                 if list.response.rect.expand(8.0).contains(pointer) {
                     let (index, rect) = rects
                         .iter()
@@ -102,18 +155,15 @@ fn show_list(
                                 .total_cmp(&b.distance_sq_to_pos(pointer))
                         })
                         .expect("nonempty zone list");
-                    let after = pointer.x > rect.center().x;
+                    let after = pointer.y > rect.center().y;
                     let slot = index + usize::from(after);
-                    let x = if after {
-                        rect.right() + 2.0
+                    let y = if after {
+                        rect.bottom() + 1.0
                     } else {
-                        rect.left() - 2.0
+                        rect.top() - 1.0
                     };
-                    ui.painter().vline(
-                        x,
-                        rect.y_range().expand(3.0),
-                        egui::Stroke::new(3.0_f32, ui.visuals().selection.stroke.color),
-                    );
+                    ui.painter()
+                        .hline(rect.x_range(), y, egui::Stroke::new(2.0_f32, p.accent));
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                     if ui.input(|input| input.pointer.any_released()) {
                         egui::DragAndDrop::clear_payload(ui.ctx());

@@ -1,8 +1,9 @@
+use super::theme::{self, Palette, Tone};
 use crate::core::{
     config::{View, Zone},
     monitor::{Bounds, Monitor},
 };
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
+use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 use std::collections::HashMap;
 
 mod docking;
@@ -27,6 +28,8 @@ pub struct Canvas {
     pub drawing: bool,
     pub snap_enabled: bool,
     pub feedback: Option<String>,
+    /// Launch status per zone index, shown on the zone cards.
+    pub status: Vec<Option<(String, Tone)>>,
     start: Option<(String, Pos2)>,
     drag: Option<Drag>,
     sizes: HashMap<String, Vec2>,
@@ -38,6 +41,7 @@ impl Default for Canvas {
             drawing: false,
             snap_enabled: true,
             feedback: None,
+            status: Vec::new(),
             start: None,
             drag: None,
             sizes: HashMap::new(),
@@ -92,34 +96,49 @@ impl Canvas {
         view: &mut View,
         selected: &mut Option<usize>,
     ) -> bool {
+        let p = theme::palette(ui.ctx());
+        let height = (ui.available_height() - 4.0).clamp(240.0, 900.0);
         let (area, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 310.0), Sense::hover());
-        ui.painter()
-            .rect_filled(area, 12.0, Color32::from_rgb(18, 25, 31));
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
         self.sizes.clear();
         if monitors.is_empty() {
             ui.painter().text(
                 area.center(),
                 Align2::CENTER_CENTER,
-                "No displays available. Check Activity, then Refresh displays.",
-                FontId::proportional(16.0),
-                Color32::GRAY,
+                "No displays available. Check the log, then Refresh displays.",
+                FontId::proportional(15.0),
+                p.muted,
             );
             return false;
         }
         let screens = preview_screens(area, monitors);
+        // Zones live in each monitor's work area, as they are placed; panels and docks stay hatched.
+        let areas: Vec<_> = screens
+            .iter()
+            .map(|(monitor, screen)| (*monitor, work_rect(monitor, *screen)))
+            .collect();
         // Process captured movement once, independently of monitor rendering order.
-        let mut changed = self.move_across_monitors(ui, &screens, view);
-        for (number, (monitor, rect)) in screens.iter().enumerate() {
-            let rect = *rect;
+        let mut changed = self.move_across_monitors(ui, &areas, view);
+        for (number, ((monitor, screen), (_, rect))) in screens.iter().zip(&areas).enumerate() {
+            let (screen, rect) = (*screen, *rect);
             self.sizes.insert(monitor.name.clone(), rect.size());
             ui.painter().rect(
-                rect,
-                4.0,
-                Color32::from_rgb(29, 40, 49),
-                Stroke::new(1.0_f32, Color32::from_rgb(82, 100, 112)),
+                screen,
+                6.0,
+                p.monitor,
+                Stroke::new(1.0_f32, p.monitor_edge),
                 StrokeKind::Inside,
             );
+            for strut in [
+                Rect::from_x_y_ranges(screen.x_range(), screen.top()..=rect.top()),
+                Rect::from_x_y_ranges(screen.x_range(), rect.bottom()..=screen.bottom()),
+                Rect::from_x_y_ranges(screen.left()..=rect.left(), rect.y_range()),
+                Rect::from_x_y_ranges(rect.right()..=screen.right(), rect.y_range()),
+            ] {
+                if strut.width() >= 1.0 && strut.height() >= 1.0 {
+                    theme::hatch(ui.painter(), strut.shrink(1.0), p.hatch);
+                }
+            }
             let peers: Vec<_> = view
                 .zones
                 .iter()
@@ -130,7 +149,7 @@ impl Canvas {
             let all: Vec<_> = peers.iter().map(|(_, bounds)| *bounds).collect();
             if self.snap_enabled && (self.drawing || self.drag.is_some()) {
                 for fraction in [0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 0.75] {
-                    let color = Color32::from_white_alpha(14);
+                    let color = p.zone_edge.gamma_multiply(0.35);
                     ui.painter().line_segment(
                         [
                             Pos2::new(rect.left() + rect.width() * fraction, rect.top()),
@@ -170,9 +189,9 @@ impl Canvas {
                                 candidate.unwrap_or_else(|| from_points(*start, end)),
                             );
                             let color = if candidate.is_some() {
-                                Color32::from_rgb(103, 221, 177)
+                                p.accent
                             } else {
-                                Color32::from_rgb(244, 120, 105)
+                                p.danger
                             };
                             ui.painter().rect_stroke(
                                 preview,
@@ -181,7 +200,7 @@ impl Canvas {
                                 StrokeKind::Inside,
                             );
                             if let Some(bounds) = candidate.filter(|_| self.snap_enabled) {
-                                guides(ui, rect, bounds, &all);
+                                guides(ui, &p, rect, bounds, &all);
                             }
                             if response.drag_stopped() {
                                 if let Some(bounds) = candidate
@@ -288,51 +307,41 @@ impl Canvas {
                 let collision = neighbours
                     .iter()
                     .any(|other| docking::overlaps(zone.bounds, *other));
-                let color = if collision {
-                    Color32::from_rgb(244, 140, 105)
-                } else if active {
-                    Color32::from_rgb(103, 221, 177)
-                } else {
-                    Color32::from_rgb(98, 157, 187)
-                };
-                ui.painter().rect(
-                    zone_area.shrink(2.0),
-                    3.0,
-                    color.gamma_multiply(0.18),
-                    Stroke::new(if active { 2.0_f32 } else { 1.0_f32 }, color),
-                    StrokeKind::Inside,
-                );
-                let text_y = zone_area.top() + 8.0;
-                ui.painter().with_clip_rect(zone_area.shrink(5.0)).text(
-                    Pos2::new(zone_area.left() + 8.0, text_y),
-                    Align2::LEFT_TOP,
-                    zone.application
-                        .as_ref()
-                        .map(|app| app.name.as_str())
-                        .unwrap_or(&zone.name),
-                    FontId::proportional(13.0),
-                    color,
+                let status = self.status.get(index).cloned().flatten();
+                let failed = status
+                    .as_ref()
+                    .is_some_and(|(_, tone)| *tone == Tone::Danger);
+                paint_zone(
+                    ui,
+                    &p,
+                    zone_area,
+                    index,
+                    zone,
+                    active,
+                    collision || failed,
+                    status,
                 );
                 if !self.drawing {
-                    ui.painter().rect_filled(
-                        Rect::from_min_max(zone_area.max - Vec2::splat(14.0), zone_area.max)
-                            .shrink(3.0),
-                        2.0,
-                        color,
-                    );
+                    let grip = zone_area.shrink(4.0).max;
+                    for offset in [4.0, 8.0] {
+                        ui.painter().line_segment(
+                            [grip - Vec2::new(offset, 0.0), grip - Vec2::new(0.0, offset)],
+                            Stroke::new(1.0_f32, if active { p.accent } else { p.zone_edge }),
+                        );
+                    }
                 }
                 if self.snap_enabled && self.drag.as_ref().is_some_and(|drag| drag.zone == index) {
-                    guides(ui, rect, zone.bounds, &neighbours);
+                    guides(ui, &p, rect, zone.bounds, &neighbours);
                 }
             }
             // Captions live outside the editable screen, in a dedicated row gutter.
-            let caption = monitor_caption(rect);
+            let caption = monitor_caption(screen);
             ui.painter().with_clip_rect(caption).text(
                 caption.left_center(),
                 Align2::LEFT_CENTER,
                 format!("{} · {}", number + 1, monitor.name),
-                FontId::proportional(11.0),
-                Color32::from_rgb(153, 171, 181),
+                FontId::monospace(11.0),
+                p.muted,
             );
             ui.interact(
                 caption,
@@ -355,6 +364,7 @@ impl Canvas {
         screens: &[(&Monitor, Rect)],
         view: &mut View,
     ) -> bool {
+        let p = theme::palette(ui.ctx());
         let Some(drag) = self
             .drag
             .as_ref()
@@ -419,7 +429,7 @@ impl Canvas {
                     ui.painter().rect_stroke(
                         *rect,
                         4.0,
-                        Stroke::new(2.0_f32, Color32::from_rgb(103, 221, 177)),
+                        Stroke::new(2.0_f32, p.accent),
                         StrokeKind::Outside,
                     );
                 } else {
@@ -430,7 +440,7 @@ impl Canvas {
                     ui.painter().rect_stroke(
                         *rect,
                         4.0,
-                        Stroke::new(2.0_f32, Color32::from_rgb(244, 120, 105)),
+                        Stroke::new(2.0_f32, p.danger),
                         StrokeKind::Outside,
                     );
                 }
@@ -502,6 +512,112 @@ fn preview_screens(area: Rect, monitors: &[Monitor]) -> Vec<(&Monitor, Rect)> {
         .collect()
 }
 
+/// The part of a previewed monitor that `monitor.usable()` leaves for windows.
+fn work_rect(monitor: &Monitor, screen: Rect) -> Rect {
+    let area = monitor.usable();
+    let scale = Vec2::new(
+        screen.width() / monitor.width.max(1) as f32,
+        screen.height() / monitor.height.max(1) as f32,
+    );
+    Rect::from_min_size(
+        screen.min + Vec2::new((area.x - monitor.x) as f32, (area.y - monitor.y) as f32) * scale,
+        Vec2::new(area.width as f32, area.height as f32) * scale,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_zone(
+    ui: &egui::Ui,
+    p: &Palette,
+    area: Rect,
+    index: usize,
+    zone: &Zone,
+    active: bool,
+    alert: bool,
+    status: Option<(String, Tone)>,
+) {
+    let card = area.shrink(3.0);
+    let (fill, edge, width) = if alert {
+        (p.danger_soft, p.danger, 2.0_f32)
+    } else if active {
+        (p.accent_soft, p.accent, 2.0_f32)
+    } else {
+        (p.zone, p.zone_edge, 1.0_f32)
+    };
+    ui.painter().rect(
+        card,
+        5.0,
+        fill,
+        Stroke::new(width, edge),
+        StrokeKind::Inside,
+    );
+    let painter = ui.painter().with_clip_rect(card.shrink(2.0));
+    let badge = Rect::from_min_size(card.min + Vec2::new(7.0, 7.0), Vec2::splat(20.0));
+    painter.rect_filled(badge, 4.0, if active { p.accent } else { p.raised });
+    painter.text(
+        badge.center(),
+        Align2::CENTER_CENTER,
+        (index + 1).to_string(),
+        FontId::monospace(11.0),
+        if active { p.accent_on } else { p.muted },
+    );
+    let title = zone
+        .application
+        .as_ref()
+        .map(|app| app.name.as_str())
+        .unwrap_or(if zone.command.trim().is_empty() {
+            "Choose an app"
+        } else {
+            "Custom command"
+        });
+    let text_x = badge.right() + 8.0;
+    painter.text(
+        Pos2::new(text_x, badge.top() + 1.0),
+        Align2::LEFT_TOP,
+        title,
+        FontId::new(12.0, theme::strong_family()),
+        if zone.application.is_some() || !zone.command.trim().is_empty() {
+            p.text
+        } else {
+            p.muted
+        },
+    );
+    let detail = if !zone.terminal_command.trim().is_empty() {
+        format!("$ {}", zone.terminal_command.trim())
+    } else if zone.application.is_none() && !zone.command.trim().is_empty() {
+        format!("$ {}", zone.command.trim())
+    } else {
+        String::new()
+    };
+    if !detail.is_empty() {
+        painter.text(
+            Pos2::new(text_x, badge.top() + 17.0),
+            Align2::LEFT_TOP,
+            detail,
+            FontId::monospace(11.0),
+            p.muted,
+        );
+    }
+    if let Some((text, tone)) = status {
+        let galley = painter.layout_no_wrap(text, FontId::proportional(11.0), tone.color(p));
+        let chip = Rect::from_min_size(
+            Pos2::new(
+                card.right() - galley.size().x - 18.0,
+                card.bottom() - galley.size().y - 16.0,
+            ),
+            galley.size() + Vec2::new(10.0, 4.0),
+        );
+        painter.rect(
+            chip,
+            4.0,
+            p.panel,
+            Stroke::new(1.0_f32, tone.color(p)),
+            StrokeKind::Inside,
+        );
+        painter.galley(chip.min + Vec2::new(5.0, 2.0), galley, tone.color(p));
+    }
+}
+
 fn monitor_caption(screen: Rect) -> Rect {
     Rect::from_min_size(
         screen.left_top() + Vec2::new(2.0, -18.0),
@@ -530,9 +646,9 @@ fn zone_rect(rect: Rect, bounds: Bounds) -> Rect {
         Vec2::new(bounds.width * rect.width(), bounds.height * rect.height()),
     )
 }
-fn guides(ui: &egui::Ui, rect: Rect, bounds: Bounds, others: &[Bounds]) {
+fn guides(ui: &egui::Ui, p: &Palette, rect: Rect, bounds: Bounds, others: &[Bounds]) {
     let (x, y) = docking::lines(others);
-    let stroke = Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(103, 221, 177, 180));
+    let stroke = Stroke::new(1.5_f32, p.accent.gamma_multiply(0.75));
     for x in x {
         if (x - bounds.x).abs() < 0.00001 || (x - bounds.x - bounds.width).abs() < 0.00001 {
             let p = rect.left() + x * rect.width();

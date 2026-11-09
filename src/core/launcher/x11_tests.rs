@@ -81,7 +81,10 @@ fn x11_launch_positions_windows_on_each_monitor() {
         let expected = layout.zones[0].bounds.pixels(monitor);
         let (tx, rx) = mpsc::channel();
         launch(layout, tx);
-        let message = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let message = rx
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+            .to_string();
         assert!(message.ends_with(": positioned"), "{message}");
         let _target_guard = await_window(&target);
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -124,7 +127,10 @@ fn x11_no_window_reports_timeout_without_blocking_caller() {
     let start = Instant::now();
     launch(view(&monitors[0].name, "true".into()), tx);
     assert!(start.elapsed() < Duration::from_millis(100));
-    let message = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let message = rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap()
+        .to_string();
     assert!(
         message.contains("No new window belonging to this process"),
         "{message}"
@@ -145,7 +151,7 @@ fn x11_disconnected_monitor_does_not_spawn_command() {
     );
     let (tx, rx) = mpsc::channel();
     launch(view("herdctrl-nonexistent-display", command), tx);
-    let message = rx.recv_timeout(Duration::from_secs(4)).unwrap();
+    let message = rx.recv_timeout(Duration::from_secs(4)).unwrap().to_string();
     let spawned = marker.exists();
     if spawned {
         let _ = fs::remove_file(marker);

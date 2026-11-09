@@ -43,9 +43,9 @@ impl Backend {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::X11 => "Linux / X11",
-            Self::Gnome => "GNOME / Wayland",
-            Self::UnsupportedWayland => "Wayland / unsupported compositor",
+            Self::X11 => "X11",
+            Self::Gnome => "GNOME 50 · Wayland",
+            Self::UnsupportedWayland => "Wayland · unsupported",
         }
     }
 

@@ -2,6 +2,7 @@ use super::{applications, config::View};
 use crate::os::{linux, Backend};
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     process::{Command, Stdio},
     sync::mpsc::Sender,
     thread,
@@ -17,7 +18,61 @@ mod x11_tests;
 static VIEW_RUN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod matching;
 
-pub fn launch(view: View, events: Sender<String>) {
+/// One result of a view launch. `zone` indexes the launched view's zones; `None` concerns the whole view.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Report {
+    pub zone: Option<usize>,
+    pub name: String,
+    pub outcome: Outcome,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Outcome {
+    /// An already open window was moved into the zone.
+    Arranged,
+    /// A new window was opened and placed.
+    Opened,
+    Failed(String),
+}
+
+impl Report {
+    fn view(error: String) -> Self {
+        Self {
+            zone: None,
+            name: String::new(),
+            outcome: Outcome::Failed(error),
+        }
+    }
+
+    fn zone(index: usize, name: &str, outcome: Outcome) -> Self {
+        Self {
+            zone: Some(index),
+            name: name.into(),
+            outcome,
+        }
+    }
+
+    pub fn is_success(&self) -> bool {
+        !matches!(self.outcome, Outcome::Failed(_))
+    }
+}
+
+impl fmt::Display for Report {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match &self.outcome {
+            Outcome::Arranged => "existing window arranged",
+            Outcome::Opened => "positioned",
+            Outcome::Failed(error) => error,
+        };
+        if self.zone.is_some() {
+            write!(f, "{}: {text}", self.name)
+        } else {
+            f.write_str(text)
+        }
+    }
+}
+
+pub fn launch(view: View, events: Sender<Report>) {
     let backend = Backend::detect();
     thread::spawn(move || {
         let _view_run = VIEW_RUN.lock().unwrap_or_else(|error| error.into_inner());
@@ -33,14 +88,14 @@ pub fn launch(view: View, events: Sender<String>) {
         let monitors = match backend.monitors() {
             Ok(monitors) => monitors,
             Err(error) => {
-                let _ = events.send(error);
+                let _ = events.send(Report::view(error));
                 return;
             }
         };
         let windows = match backend.windows() {
             Ok(windows) => windows,
             Err(error) => {
-                let _ = events.send(error);
+                let _ = events.send(Report::view(error));
                 return;
             }
         };
@@ -74,16 +129,18 @@ pub fn launch(view: View, events: Sender<String>) {
                     .find(|monitor| monitor.name == zone.monitor)
                     .cloned()
                 else {
-                    let _ = events.send(format!(
-                        "{}: monitor {} is disconnected",
-                        zone.name, zone.monitor
+                    let _ = events.send(Report::zone(
+                        index,
+                        &zone.name,
+                        Outcome::Failed(format!("monitor {} is disconnected", zone.monitor)),
                     ));
                     continue;
                 };
                 let selected_app = match selection {
                     Ok(app) => app,
                     Err(error) => {
-                        let _ = events.send(format!("{}: {error}", zone.name));
+                        let _ =
+                            events.send(Report::zone(index, &zone.name, Outcome::Failed(error)));
                         continue;
                     }
                 };
@@ -91,9 +148,12 @@ pub fn launch(view: View, events: Sender<String>) {
                 if !script.trim().is_empty()
                     && selected_app.as_ref().is_some_and(|app| !app.is_terminal)
                 {
-                    let _ = events.send(format!(
-                        "{}: choose a terminal application to run a terminal program",
-                        zone.name
+                    let _ = events.send(Report::zone(
+                        index,
+                        &zone.name,
+                        Outcome::Failed(
+                            "choose a terminal application to run a terminal program".into(),
+                        ),
                     ));
                     continue;
                 }
@@ -117,11 +177,11 @@ pub fn launch(view: View, events: Sender<String>) {
                 scope.spawn(move || {
                     let bounds = zone.bounds.pixels(&monitor);
                     if let Some(window) = reused {
-                        let message = match backend.position(&window, &monitor, bounds) {
-                            Ok(()) => format!("{}: existing window arranged", zone.name),
-                            Err(error) => format!("{}: {error}", zone.name),
+                        let outcome = match backend.position(&window, &monitor, bounds) {
+                            Ok(()) => Outcome::Arranged,
+                            Err(error) => Outcome::Failed(error),
                         };
-                        let _ = events.send(message);
+                        let _ = events.send(Report::zone(index, &zone.name, outcome));
                         return;
                     }
                     let placed = {
@@ -138,11 +198,15 @@ pub fn launch(view: View, events: Sender<String>) {
                     };
                     match placed {
                         Ok(window) => {
-                            let _ = events.send(format!("{}: positioned", zone.name));
+                            let _ = events.send(Report::zone(index, &zone.name, Outcome::Opened));
                             settle(backend, &window, &monitor, bounds);
                         }
                         Err(error) => {
-                            let _ = events.send(format!("{}: {error}", zone.name));
+                            let _ = events.send(Report::zone(
+                                index,
+                                &zone.name,
+                                Outcome::Failed(error),
+                            ));
                         }
                     }
                 });

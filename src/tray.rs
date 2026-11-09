@@ -1,7 +1,10 @@
 //! Background tray process: owns the global hotkeys and launches views without
 //! an editor window, so no renderer or GUI state stays resident.
 use crate::{
-    core::{config::Config, launcher},
+    core::{
+        config::Config,
+        launcher::{self, Report},
+    },
     os::{gnome, Backend},
 };
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
@@ -44,6 +47,11 @@ pub fn lock(kind: &str) -> Result<Option<File>, String> {
     }
 }
 
+/// True while a tray process holds this layouts file's lock.
+pub fn is_running() -> bool {
+    matches!(lock(TRAY_LOCK), Ok(None))
+}
+
 /// Starts the tray process unless one is already running in this session.
 pub fn ensure_running() -> Result<(), String> {
     if lock(TRAY_LOCK)?.is_none() {
@@ -81,11 +89,12 @@ pub fn run() -> Result<(), String> {
     let path = Config::path()?;
     let (tx, rx) = mpsc::channel();
     let (events, event_rx) = mpsc::channel();
+    let (launches, launch_rx) = mpsc::channel();
     let mut hotkeys = Hotkeys::new(Backend::detect(), events.clone());
     let notifier = Notifier::default();
     let tray = Tray {
         views: Vec::new(),
-        autostart: autostart_path().is_ok_and(|p| p.exists()),
+        autostart: autostart_enabled(),
         tx,
         icon: icon(),
     };
@@ -96,9 +105,18 @@ pub fn run() -> Result<(), String> {
     let mut config = Config::default();
     let mut stamp = None;
     let mut next_check = Instant::now();
+    let mut autostart = autostart_enabled();
     loop {
         if Instant::now() >= next_check {
             next_check = Instant::now() + Duration::from_secs(1);
+            // The editor can toggle start at login too; keep the checkmark in step.
+            let enabled = autostart_enabled();
+            if enabled != autostart {
+                autostart = enabled;
+                if let Some(handle) = &handle {
+                    handle.update(|tray| tray.autostart = enabled);
+                }
+            }
             let current = modified(&path);
             if current != stamp {
                 stamp = current;
@@ -116,7 +134,7 @@ pub fn run() -> Result<(), String> {
             }
         }
         match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(Message::Launch(index)) => launch(&config, index, &events),
+            Ok(Message::Launch(index)) => launch(&config, index, &launches),
             Ok(Message::Edit) => match lock(EDITOR_LOCK) {
                 Ok(Some(_)) => {
                     if let Err(e) = spawn_self(&[]) {
@@ -130,18 +148,18 @@ pub fn run() -> Result<(), String> {
                 if let Err(e) = set_autostart(enabled) {
                     notifier.show("Start at login could not be changed", &e);
                 }
-                let enabled = autostart_path().is_ok_and(|p| p.exists());
+                autostart = autostart_enabled();
                 if let Some(handle) = &handle {
-                    handle.update(|tray| tray.autostart = enabled);
+                    handle.update(|tray| tray.autostart = autostart);
                 }
             }
             Ok(Message::Quit) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {}
         }
         for index in hotkeys.triggered() {
-            launch(&config, index, &events);
+            launch(&config, index, &launches);
         }
-        report(&event_rx, &notifier);
+        report(&event_rx, &launch_rx, &notifier);
     }
     // Dropping the GNOME worker releases its grabs before the tray disappears.
     drop(hotkeys);
@@ -151,24 +169,23 @@ pub fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn launch(config: &Config, index: usize, events: &Sender<String>) {
+fn launch(config: &Config, index: usize, events: &Sender<Report>) {
     if let Some(view) = config.views.get(index) {
         launcher::launch(view.clone(), events.clone());
     }
 }
 
 /// Successful placements stay quiet; anything else needs the user's attention.
-fn report(events: &Receiver<String>, notifier: &Notifier) {
+fn report(events: &Receiver<String>, launches: &Receiver<Report>, notifier: &Notifier) {
     while let Ok(message) = events.try_recv() {
-        eprintln!("{message}");
-        if !is_success(&message) {
-            notifier.show("HerdCtrl", &message);
+        notifier.show("HerdCtrl", &message);
+    }
+    while let Ok(report) = launches.try_recv() {
+        eprintln!("{report}");
+        if !report.is_success() {
+            notifier.show("HerdCtrl", &report.to_string());
         }
     }
-}
-
-fn is_success(message: &str) -> bool {
-    message.ends_with(": positioned") || message.ends_with(": existing window arranged")
 }
 
 fn modified(path: &PathBuf) -> Option<(SystemTime, u64)> {
@@ -442,6 +459,10 @@ fn icon() -> Vec<Icon> {
     }]
 }
 
+pub fn autostart_enabled() -> bool {
+    autostart_path().is_ok_and(|path| path.exists())
+}
+
 fn autostart_path() -> Result<PathBuf, String> {
     let config = Config::path()?;
     let base = config
@@ -451,7 +472,7 @@ fn autostart_path() -> Result<PathBuf, String> {
     Ok(base.join("autostart/herdctrl.desktop"))
 }
 
-fn set_autostart(enabled: bool) -> Result<(), String> {
+pub fn set_autostart(enabled: bool) -> Result<(), String> {
     let path = autostart_path()?;
     if !enabled {
         return match fs::remove_file(&path) {
@@ -514,12 +535,5 @@ mod tests {
     fn quotes_autostart_exec() {
         let entry = autostart_entry("/home/a b/$x/herd\"ctrl");
         assert!(entry.contains("Exec=\"/home/a b/\\$x/herd\\\"ctrl\" --tray\n"));
-    }
-
-    #[test]
-    fn only_placements_are_quiet() {
-        assert!(is_success("Editor: positioned"));
-        assert!(is_success("Shell: existing window arranged"));
-        assert!(!is_success("Shell: monitor DP-1 is disconnected"));
     }
 }

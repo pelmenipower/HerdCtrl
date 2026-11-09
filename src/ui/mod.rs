@@ -3,5 +3,7 @@ pub mod canvas;
 pub mod dashboard;
 pub mod hotkey_input;
 pub mod identify;
+pub mod launch_run;
+pub mod theme;
 pub mod zone_editor;
 pub mod zone_list;

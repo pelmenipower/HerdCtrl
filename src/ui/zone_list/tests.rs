@@ -99,7 +99,7 @@ fn pointer_drag_reorders_right_preserves_selected_zone_and_saved_assignments() {
         .iter()
         .map(|zone| serde_json::to_value(zone).unwrap())
         .collect();
-    let target = editor.rects[3].right_center() - Vec2::new(2.0, 0.0);
+    let target = editor.rects[3].center_bottom() - Vec2::new(0.0, 2.0);
     editor.drag(1, target);
     assert!(editor.changed);
     assert_eq!(editor.names(), ["Zone 0", "Zone 2", "Zone 3", "Zone 1"]);
@@ -122,14 +122,14 @@ fn pointer_drag_reorders_right_preserves_selected_zone_and_saved_assignments() {
 }
 
 #[test]
-fn pointer_drag_left_across_wrapped_rows_preserves_other_selection() {
+fn pointer_drag_up_preserves_other_selection() {
     let mut editor = Editor::new(230.0);
     assert!(
         editor.rects[3].top() > editor.rects[0].top(),
         "{:?}",
         editor.rects
     );
-    let target = editor.rects[0].left_center() + Vec2::new(2.0, 0.0);
+    let target = editor.rects[0].center_top() + Vec2::new(0.0, 2.0);
     editor.drag(3, target);
     assert!(editor.changed);
     assert_eq!(editor.names(), ["Zone 3", "Zone 0", "Zone 1", "Zone 2"]);
@@ -154,7 +154,7 @@ fn clicking_selects_without_reordering_and_outside_drop_cancels() {
 fn escape_cancels_and_drag_cannot_reorder_another_view() {
     let mut editor = Editor::new(800.0);
     editor.pointer(editor.rects[0].center(), Some(true));
-    let target = editor.rects[3].right_center() - Vec2::new(2.0, 0.0);
+    let target = editor.rects[3].center_bottom() - Vec2::new(0.0, 2.0);
     editor.pointer(target, None);
     editor.frame(Vec::new());
     editor.frame(vec![Event::Key {
