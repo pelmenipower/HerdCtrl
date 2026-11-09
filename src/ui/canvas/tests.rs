@@ -28,6 +28,7 @@ impl Editor {
                 width: 1920,
                 height: 1080,
                 scale: 1.5,
+                work_area: None,
             }],
         };
         editor.frame(Vec::new());
@@ -250,6 +251,7 @@ impl Editor {
                 width: 1920,
                 height: 1080,
                 scale: 1.5,
+                work_area: None,
             },
             Monitor {
                 name: "DP-2".into(),
@@ -258,6 +260,7 @@ impl Editor {
                 width: 2560,
                 height: 1440,
                 scale: 2.0,
+                work_area: None,
             },
             Monitor {
                 name: "DP-3".into(),
@@ -266,6 +269,7 @@ impl Editor {
                 width: 1920,
                 height: 1200,
                 scale: 1.0,
+                work_area: None,
             },
         ];
         editor.view.zones[0].bounds = Bounds {
@@ -422,6 +426,7 @@ fn monitor_captions_have_separate_space_without_distorting_screens() {
             width: 1080,
             height: 1920,
             scale: 1.5,
+            work_area: None,
         },
         Monitor {
             name: "Top".into(),
@@ -430,6 +435,7 @@ fn monitor_captions_have_separate_space_without_distorting_screens() {
             width: 1920,
             height: 1080,
             scale: 1.0,
+            work_area: None,
         },
         Monitor {
             name: "Bottom".into(),
@@ -438,6 +444,7 @@ fn monitor_captions_have_separate_space_without_distorting_screens() {
             width: 1920,
             height: 1080,
             scale: 2.0,
+            work_area: None,
         },
     ];
     let area = Rect::from_min_size(Pos2::new(8.0, 8.0), Vec2::new(984.0, 310.0));

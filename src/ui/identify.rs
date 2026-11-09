@@ -418,6 +418,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
                 scale: 1.5,
+                work_area: None,
             },
             Monitor {
                 name: "DP-left".into(),
@@ -426,6 +427,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
                 scale: 1.0,
+                work_area: None,
             },
             Monitor {
                 name: "DP-top".into(),
@@ -434,6 +436,7 @@ mod tests {
                 width: 1920,
                 height: 1200,
                 scale: 2.0,
+                work_area: None,
             },
         ];
         sort_for_display(&mut monitors);

@@ -52,10 +52,13 @@ export default class HerdCtrlExtension extends Extension {
             const geometry = global.display.get_monitor_geometry(index);
             // Mirrored physical outputs share one logical rectangle.
             const name = logical.get_monitors().map(m => m.get_connector()).sort().join('+');
+            // Space left by the top bar and docks, so zones do not cover them.
+            const area = global.workspace_manager.get_active_workspace().get_work_area_for_monitor(index);
             return {
                 name, index, x: geometry.x, y: geometry.y,
                 width: geometry.width, height: geometry.height,
                 scale: global.display.get_monitor_scale(index),
+                work_area: {x: area.x, y: area.y, width: area.width, height: area.height},
             };
         });
     }

@@ -247,6 +247,7 @@ mod tests {
                 width: width as u32,
                 height: 1080,
                 scale: 1.5,
+                work_area: None,
             };
             let a = result[0].pixels(&monitor);
             let b = result[1].pixels(&monitor);

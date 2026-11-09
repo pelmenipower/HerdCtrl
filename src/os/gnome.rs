@@ -115,6 +115,10 @@ mod tests {
         let state: State = decode_reply(r#"{"ok":true,"result":{"monitors":[{"name":"DP-1","x":-1280,"y":0,"width":1280,"height":720,"scale":1.5}],"windows":[{"id":"42","pid":123}]}}"#).unwrap();
         assert_eq!(state.monitors[0].x, -1280);
         assert_eq!(state.windows[0].pid, 123);
+        assert_eq!(state.monitors[0].work_area, None);
+        let state: State = decode_reply(r#"{"ok":true,"result":{"monitors":[{"name":"DP-1","x":0,"y":0,"width":1920,"height":1080,"scale":1.0,"work_area":{"x":0,"y":32,"width":1920,"height":1048}}],"windows":[]}}"#).unwrap();
+        assert_eq!(state.monitors[0].usable().y, 32);
+        assert_eq!(state.monitors[0].usable().height, 1048);
     }
 
     #[test]

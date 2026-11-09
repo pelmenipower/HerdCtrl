@@ -249,3 +249,7 @@ User feedback: clicking modifier toggles was awkward, and two terminal zones did
 - Terminal placement: the user's Ptyxis has `restore-window-size=true` (saved 118×51 cells). The tray log reported both terminal zones as placed, so the likely cause is the app resizing its window after the first placement. The bridge exposes no window geometry, so this was not confirmed. Newly opened windows are now placed again after 0.25, 0.75 and 1.75 s; reused windows are not. The "positioned" message is sent after the first placement. Same-app launches do not wait for the settle phase. Not yet verified on the real desktop.
 
 Checks: fmt, clippy with warnings denied, 61 tests passed (seven opt-in integration tests ignored), release build.
+
+## Work area — 2026-11-09
+
+User feedback: windows on the main monitor covered the top bar and dock. The GNOME extension now reports each monitor's work area (`Meta.Workspace.get_work_area_for_monitor`) as an optional `work_area`; `Bounds::pixels` lays zones out in it when it lies within the monitor, otherwise in the whole monitor. Older extensions and X11 omit it and keep the previous behaviour. Tests: `zones_fill_the_work_area_and_ignore_an_invalid_one`, `rejects_bridge_errors_and_wrong_schemas`; controller tests (node, 7 passed). The updated extension is installed but needs a re-login before Mutter loads it; real-desktop placement is not verified yet. X11 `_NET_WORKAREA` is not used.

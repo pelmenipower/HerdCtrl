@@ -42,6 +42,7 @@ pub fn parse_monitors(raw: &str) -> Result<Vec<Monitor>, String> {
                         x,
                         y,
                         scale: 1.0,
+                        work_area: None,
                     });
                     active = Some(monitors.len() - 1);
                     break;
