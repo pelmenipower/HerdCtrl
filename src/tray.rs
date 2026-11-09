@@ -92,16 +92,22 @@ pub fn run() -> Result<(), String> {
     let (launches, launch_rx) = mpsc::channel();
     let mut hotkeys = Hotkeys::new(Backend::detect(), events.clone());
     let notifier = Notifier::default();
-    let tray = Tray {
-        views: Vec::new(),
-        autostart: autostart_enabled(),
-        tx,
-        icon: icon(),
-    };
-    let handle = tray
+    let icon = icon();
+    // Without a tray host (screen locked, AppIndicator extension off) the icon fails; keep
+    // listening for hotkeys and try again periodically.
+    let spawn = |views: Vec<String>| {
+        Tray {
+            views,
+            autostart: autostart_enabled(),
+            tx: tx.clone(),
+            icon: icon.clone(),
+        }
         .spawn()
+    };
+    let mut handle = spawn(Vec::new())
         .map_err(|e| notifier.show("Tray icon unavailable", &e.to_string()))
         .ok();
+    let mut next_icon_attempt = Instant::now() + Duration::from_secs(5);
     let mut config = Config::default();
     let mut stamp = None;
     let mut next_check = Instant::now();
@@ -116,6 +122,10 @@ pub fn run() -> Result<(), String> {
                 if let Some(handle) = &handle {
                     handle.update(|tray| tray.autostart = enabled);
                 }
+            }
+            if handle.is_none() && Instant::now() >= next_icon_attempt {
+                next_icon_attempt = Instant::now() + Duration::from_secs(5);
+                handle = spawn(menu_views(&config)).ok();
             }
             let current = modified(&path);
             if current != stamp {
@@ -153,7 +163,8 @@ pub fn run() -> Result<(), String> {
                     handle.update(|tray| tray.autostart = autostart);
                 }
             }
-            Ok(Message::Quit) | Err(RecvTimeoutError::Disconnected) => break,
+            Ok(Message::Quit) => break,
+            Err(RecvTimeoutError::Disconnected) => unreachable!("the run loop holds a sender"),
             Err(RecvTimeoutError::Timeout) => {}
         }
         for index in hotkeys.triggered() {
