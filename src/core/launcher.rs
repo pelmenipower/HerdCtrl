@@ -278,28 +278,18 @@ const SETTLE_MS: [u64; 3] = [250, 500, 1000];
 
 /// Freshly started apps (e.g. Ptyxis with restore-window-size, Zen) may apply
 /// their saved size or position after the window first appears, overriding
-/// the zone. Re-apply it a few times; stop once the window is gone. On X11 a
-/// repeated move can drift by the frame decoration (Openbox), so there the zone
-/// is only re-applied when the window's geometry changed since the last check.
+/// the zone. Re-apply it a few times; stop once the window is gone.
 fn settle(
     backend: Backend,
     window: &linux::Window,
     monitor: &super::monitor::Monitor,
     bounds: (i32, i32, u32, u32),
 ) {
-    let mut last = None;
-    for (step, pause) in SETTLE_MS.into_iter().enumerate() {
+    for pause in SETTLE_MS {
         thread::sleep(Duration::from_millis(pause));
-        let current = backend.geometry(window);
-        let unchanged = current.is_some() && (step == 0 || current == last);
-        last = current;
-        if unchanged {
-            continue;
-        }
         if backend.position(window, monitor, bounds).is_err() {
             return;
         }
-        last = backend.geometry(window);
     }
 }
 

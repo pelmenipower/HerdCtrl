@@ -65,14 +65,6 @@ impl Backend {
         }
     }
 
-    /// Current window geometry where the backend can report it (X11 only).
-    pub fn geometry(self, window: &Window) -> Option<(i32, i32, u32, u32)> {
-        match self {
-            Self::X11 => linux::window_geometry(&window.id),
-            Self::Gnome | Self::UnsupportedWayland => None,
-        }
-    }
-
     pub fn position(
         self,
         window: &Window,

@@ -103,26 +103,6 @@ pub fn windows() -> Result<Vec<Window>, String> {
     Ok(parse_windows(&output("wmctrl", &["-lp"])?))
 }
 
-/// A window's geometry as `wmctrl -lG` reports it.
-pub fn window_geometry(id: &str) -> Option<(i32, i32, u32, u32)> {
-    parse_window_geometry(&output("wmctrl", &["-lG"]).ok()?, id)
-}
-
-fn parse_window_geometry(raw: &str, id: &str) -> Option<(i32, i32, u32, u32)> {
-    raw.lines().find_map(|line| {
-        let fields: Vec<_> = line.split_whitespace().collect();
-        if *fields.first()? != id {
-            return None;
-        }
-        Some((
-            fields.get(2)?.parse().ok()?,
-            fields.get(3)?.parse().ok()?,
-            fields.get(4)?.parse().ok()?,
-            fields.get(5)?.parse().ok()?,
-        ))
-    })
-}
-
 fn parent_in_stat(stat: &str) -> Option<u32> {
     stat.rsplit_once(") ")?
         .1
@@ -217,17 +197,6 @@ mod tests {
         assert!(!has_ancestor(me, &HashSet::from([u32::MAX])));
         assert_eq!(parent_in_stat("1 (a b) S 42 1 1 0"), Some(42));
     }
-    #[test]
-    fn parses_geometry_of_one_window() {
-        let raw =
-            "0x02a00003  0 192  162  768  540  host Terminal\n0x02a00009 -1 0 0 10 10 host Other\n";
-        assert_eq!(
-            parse_window_geometry(raw, "0x02a00003"),
-            Some((192, 162, 768, 540))
-        );
-        assert_eq!(parse_window_geometry(raw, "0x0badf00d"), None);
-    }
-
     #[test]
     fn parses_window_pid_without_matching_titles() {
         let windows = parse_windows("0x01200003 0 123 host Terminal title with spaces\ninvalid");
