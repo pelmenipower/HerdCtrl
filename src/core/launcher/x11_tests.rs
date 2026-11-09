@@ -27,6 +27,23 @@ fn window_named(title: &str) -> Option<(String, [i32; 4])> {
         })
 }
 
+/// Client geometry from `xwininfo`. `wmctrl -lG` adds Openbox's title bar to y a second
+/// time, which made placement look 40 px too low.
+fn client_geometry(id: &str) -> [i32; 4] {
+    let info = linux::output("xwininfo", &["-id", id]).expect("xwininfo must work");
+    let value = |label: &str| {
+        info.lines()
+            .find_map(|line| line.trim().strip_prefix(label)?.trim().parse().ok())
+            .unwrap_or_else(|| panic!("xwininfo has no {label}"))
+    };
+    [
+        value("Absolute upper-left X:"),
+        value("Absolute upper-left Y:"),
+        value("Width:"),
+        value("Height:"),
+    ]
+}
+
 fn await_window(title: &str) -> TestWindow {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -86,13 +103,13 @@ fn x11_launch_positions_windows_on_each_monitor() {
             .unwrap()
             .to_string();
         assert!(message.ends_with(": positioned"), "{message}");
-        let _target_guard = await_window(&target);
+        let target_guard = await_window(&target);
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            let actual = window_named(&target).unwrap().1;
+            let actual = client_geometry(&target_guard.0);
             let expected = [expected.0, expected.1, expected.2 as i32, expected.3 as i32];
-            // Xterm uses character increments; wmctrl reports client geometry,
-            // while positioning also involves WM frame decorations.
+            // Xterm uses character increments, and the zone holds the WM frame,
+            // so the client sits up to a title bar below and inside the target.
             let fits = actual
                 .iter()
                 .zip(expected)

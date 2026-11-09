@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev xvfb xauth openbox wmctrl x11-xserver-utils xdotool xterm gjs dbus
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libgl1-mesa-dev xvfb xauth openbox wmctrl x11-xserver-utils x11-utils xdotool xterm gjs dbus
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy && rustup default stable
       - run: cargo fmt --check
