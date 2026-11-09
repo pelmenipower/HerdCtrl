@@ -275,4 +275,21 @@ Checks: `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings
 
 ## Tray without a tray host — 2026-11-09
 
-Found while restarting the tray with the screen locked: GNOME deactivates extensions on the lock screen, so neither the StatusNotifierWatcher (AppIndicator extension) nor the HerdCtrl bridge was available. The tray then exited at once: the failed icon dropped the menu's channel sender, which the loop treated as Quit. The loop now keeps its own sender, so hotkeys keep running, and it retries registering the icon every 5 s. Hotkey grabs already reconnected on their own every 2 s. Live check: started while locked, the tray stayed up for 7 s with one "Tray icon unavailable" notice and no repeats. That the icon appears after unlocking is not verified yet.
+Found while restarting the tray with the screen locked: GNOME deactivates extensions on the lock screen, so neither the StatusNotifierWatcher (AppIndicator extension) nor the HerdCtrl bridge was available. The tray then exited at once: the failed icon dropped the menu's channel sender, which the loop treated as Quit. The loop now keeps its own sender, so hotkeys keep running. Hotkey grabs reconnect on their own every 2 s.
+
+A first fix retried the icon every 5 s. It worked: after unlocking, the icon appeared. But after about 210 failed attempts during a lock, the tray's anonymous memory had grown from 1.8 MB to 19 MB. Each failed ksni spawn leaves its connection's executor task behind. The tray now spawns once with ksni's `assume_sni_available(true)`: without a watcher the item waits and registers when one appears. Check on an isolated `dbus-run-session` bus without a watcher: the tray stayed up with no error, at a steady 7,288 KiB VmRSS / 924 KiB RssAnon over 60 s. On the desktop the icon registered at once (1,836 KiB RssAnon). Not yet verified with the new build: the icon reappearing after a real screen lock. Known limit: ending the tray with a signal instead of Quit leaves its GNOME shortcuts owned for up to 15 s; until then a new tray reports "Another HerdCtrl instance owns the global shortcuts" and then reconnects.
+
+## Measurements after the redesign — 2026-11-09
+
+`scripts/measure-rss.sh` now waits for a HerdCtrl window owned by the started PID (`_NET_WM_PID`), so an open editor no longer makes it sample early. It also reports the time from start until that window is mapped (polling about every 10 ms plus the `xwininfo` call). Five measured starts after one excluded warm-up, release build 7,796,552 bytes, GNOME 50 Wayland, first-start screen with a throwaway configuration:
+
+| Run | VmRSS KiB | RssAnon KiB | Visible after |
+| --- | --- | --- | --- |
+| 1 | 75,724 | 16,476 | 75 ms |
+| 2 | 75,592 | 16,500 | 69 ms |
+| 3 | 75,656 | 16,464 | 66 ms |
+| 4 | 75,640 | 16,492 | 73 ms |
+| 5 | 75,660 | 16,472 | 67 ms |
+| Median | 75,656 | 16,476 | 69 ms |
+
+PRD 6: binary size and warm visible-window time (under 100 ms) are met; the visible window is not the first rendered frame. Editor RAM remains above 30 MB (Mesa/LLVM mappings, see the RSS investigation), slightly below the 77–80 MB measured before the redesign. The tray, which stays resident, uses about 8.7 MB VmRSS / 1.8 MB RssAnon.

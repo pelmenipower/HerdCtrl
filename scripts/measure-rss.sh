@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Measure resident memory of herdctrl one second after its window appears.
+# Measure resident memory of herdctrl one second after its window appears,
+# and the time from start until that window is mapped.
 #
 # Usage: scripts/measure-rss.sh [runs] [binary]
 #   runs    measured starts (default 5); one extra warm-up start is excluded.
@@ -22,20 +23,23 @@ if command -v xwininfo >/dev/null 2>&1; then
     have_x=1
 fi
 
-# Waits for an X11 window whose name contains HerdCtrl, up to 5 s.
-# Falls back to a fixed 1.5 s delay when xwininfo is unavailable.
+# Waits up to 5 s for a HerdCtrl X11 window owned by PID $1, so other open
+# HerdCtrl windows do not count. Falls back to a fixed 1.5 s delay without xwininfo.
 wait_for_window() {
     if [[ $have_x -eq 0 ]]; then
         sleep 1.5
-        return
+        return 1
     fi
-    local i
-    for i in $(seq 1 100); do
-        if xwininfo -root -tree 2>/dev/null | grep -q 'HerdCtrl'; then
-            return
-        fi
-        sleep 0.05
+    local i id
+    for i in $(seq 1 500); do
+        for id in $(xwininfo -root -tree 2>/dev/null | awk '/"HerdCtrl"/ { print $1 }'); do
+            if xprop -id "$id" _NET_WM_PID 2>/dev/null | grep -q "= $1\$"; then
+                return 0
+            fi
+        done
+        sleep 0.01
     done
+    return 1
 }
 
 # Prints "VmRSS RssAnon RssFile RssShmem" in KiB for a PID.
@@ -63,9 +67,13 @@ trap 'rm -rf "$config_dir"' EXIT
 results_file="$config_dir/results"
 total=$((runs + 1))
 for ((run = 1; run <= total; run++)); do
+    started=$(date +%s%N)
     XDG_CONFIG_HOME="$config_dir" "$binary" >/dev/null 2>&1 &
     pid=$!
-    wait_for_window
+    visible="n/a"
+    if wait_for_window "$pid"; then
+        visible=$(( ($(date +%s%N) - started) / 1000000 ))
+    fi
     sleep 1
     if ! kill -0 "$pid" 2>/dev/null; then
         echo "error: herdctrl exited early on run $run" >&2
@@ -77,15 +85,16 @@ for ((run = 1; run <= total; run++)); do
     kill "$pid" $tray 2>/dev/null
     wait "$pid" 2>/dev/null
     if [[ $run -eq 1 ]]; then
-        echo "warm-up (excluded): VmRSS/RssAnon/RssFile/RssShmem KiB = $sample"
+        echo "warm-up (excluded): VmRSS/RssAnon/RssFile/RssShmem KiB = $sample, visible after $visible ms"
         continue
     fi
-    echo "run $((run - 1)): VmRSS/RssAnon/RssFile/RssShmem KiB = $sample"
-    echo "$sample" >> "$results_file"
+    echo "run $((run - 1)): VmRSS/RssAnon/RssFile/RssShmem KiB = $sample, visible after $visible ms"
+    echo "$sample $visible" >> "$results_file"
 done
 
 echo "median over $runs runs (KiB): " \
     "VmRSS=$(awk '{print $1}' "$results_file" | median)" \
     "RssAnon=$(awk '{print $2}' "$results_file" | median)" \
     "RssFile=$(awk '{print $3}' "$results_file" | median)" \
-    "RssShmem=$(awk '{print $4}' "$results_file" | median)"
+    "RssShmem=$(awk '{print $4}' "$results_file" | median)" \
+    "visible_ms=$(awk '$5 != "n/a" {print $5}' "$results_file" | median)"

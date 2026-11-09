@@ -92,22 +92,19 @@ pub fn run() -> Result<(), String> {
     let (launches, launch_rx) = mpsc::channel();
     let mut hotkeys = Hotkeys::new(Backend::detect(), events.clone());
     let notifier = Notifier::default();
-    let icon = icon();
-    // Without a tray host (screen locked, AppIndicator extension off) the icon fails; keep
-    // listening for hotkeys and try again periodically.
-    let spawn = |views: Vec<String>| {
-        Tray {
-            views,
-            autostart: autostart_enabled(),
-            tx: tx.clone(),
-            icon: icon.clone(),
-        }
-        .spawn()
-    };
-    let mut handle = spawn(Vec::new())
-        .map_err(|e| notifier.show("Tray icon unavailable", &e.to_string()))
-        .ok();
-    let mut next_icon_attempt = Instant::now() + Duration::from_secs(5);
+    // The loop keeps its own sender, so hotkeys keep running even if the icon fails.
+    let handle = Tray {
+        views: Vec::new(),
+        autostart: autostart_enabled(),
+        tx: tx.clone(),
+        icon: icon(),
+    }
+    // Without a tray host (screen locked, AppIndicator extension off) wait for one to
+    // appear instead of failing; ksni registers the icon when the watcher comes online.
+    .assume_sni_available(true)
+    .spawn()
+    .map_err(|e| notifier.show("Tray icon unavailable", &e.to_string()))
+    .ok();
     let mut config = Config::default();
     let mut stamp = None;
     let mut next_check = Instant::now();
@@ -122,10 +119,6 @@ pub fn run() -> Result<(), String> {
                 if let Some(handle) = &handle {
                     handle.update(|tray| tray.autostart = enabled);
                 }
-            }
-            if handle.is_none() && Instant::now() >= next_icon_attempt {
-                next_icon_attempt = Instant::now() + Duration::from_secs(5);
-                handle = spawn(menu_views(&config)).ok();
             }
             let current = modified(&path);
             if current != stamp {
