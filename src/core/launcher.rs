@@ -278,13 +278,18 @@ const SETTLE_MS: [u64; 3] = [250, 500, 1000];
 
 /// Freshly started apps (e.g. Ptyxis with restore-window-size, Zen) may apply
 /// their saved size or position after the window first appears, overriding
-/// the zone. Re-apply it a few times; stop once the window is gone.
+/// the zone. Re-apply it a few times on GNOME; stop once the window is gone.
+/// X11 is left alone: there each extra wmctrl move shifts windows by the frame
+/// decoration (seen with Openbox and xterm in CI).
 fn settle(
     backend: Backend,
     window: &linux::Window,
     monitor: &super::monitor::Monitor,
     bounds: (i32, i32, u32, u32),
 ) {
+    if backend != Backend::Gnome {
+        return;
+    }
     for pause in SETTLE_MS {
         thread::sleep(Duration::from_millis(pause));
         if backend.position(window, monitor, bounds).is_err() {

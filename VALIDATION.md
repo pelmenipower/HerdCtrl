@@ -297,3 +297,7 @@ PRD 6: binary size and warm visible-window time (under 100 ms) are met; the visi
 ## Interaction tests — 2026-11-09
 
 `src/ui/dashboard/interactions.rs` drives the real editor through `egui_kittest` (no GPU) with sample views, monitors and apps: **+** adds a view, selects it and starts drawing; Ctrl+S writes the layouts to a temporary file and clears the unsaved state; **…** → **Delete view…** → **Delete view** removes the view only after confirming; in the app picker ↑ and Enter choose the second app. Saving in tests does not start a tray. Checks: fmt, clippy with warnings denied, 70 tests passed (eight opt-in tests ignored), release build 7,796,680 bytes, `git diff --check`. Hover appearance and real pointer dragging in the window are still checked only by hand.
+
+## X11 CI regression — 2026-11-09
+
+The CI X11 test (Xvfb + Openbox) placed an xterm 40 px below its target (`target [192, 162, 768, 540], observed [194, 202, 766, 537]`). Re-running the last green commit's workflow on today's runner passed, so the cause was in this branch. A first fix (re-apply on X11 only after the geometry changed) left the result unchanged. The window placement is now re-applied only on GNOME; X11 keeps the single placement it had before. Not yet confirmed by CI at the time of writing; see the next run.
