@@ -1,147 +1,130 @@
+<div align="center">
+
+<img src="assets/HerdCtrl-Iconset/herdctrl.png" width="112" alt="HerdCtrl logo">
+
 # HerdCtrl
 
-A native Rust desktop application for arranging application windows into named workspaces. The product specification is [PRD.md](PRD.md); contributors must follow [AGENTS.md](AGENTS.md).
+**Draw zones on your monitors, assign an app to each, and herd every window into place with one hotkey.**
 
-## Build and run
+[![CI](https://github.com/pelmenipower/HerdCtrl/actions/workflows/ci.yml/badge.svg)](https://github.com/pelmenipower/HerdCtrl/actions/workflows/ci.yml)
+![Platform](https://img.shields.io/badge/platform-Ubuntu%20X11%20%7C%20GNOME%2050%20Wayland-E95420)
+![Rust](https://img.shields.io/badge/Rust-egui%20%2F%20eframe-B7410E)
 
-Platforms: Ubuntu with an **X11** desktop session and an EWMH-compatible window manager, or **GNOME 50 on Wayland** with the bundled HerdCtrl Shell extension. Other Wayland compositors are not supported.
+[User guide (English)](docs/manual.md) · [Handbuch (German)](docs/handbuch.md) · [Changelog](CHANGELOG.en.md) · [Änderungen (German)](CHANGELOG.md) · [Measurements](VALIDATION.md) · [Product spec](PRD.md)
+
+</div>
+
+<p align="center">
+  <img src="docs/images/screenshot-editor.png" alt="HerdCtrl editor with a view called Workstation: five zones on four monitors, the zone list in launch order and the properties of a Ptyxis terminal running herdr" width="100%">
+</p>
+
+HerdCtrl is a small native Linux app for people who open the same window setup every day: browsers, editors and terminals running specific programs, spread over several monitors. You draw the setup once as a **view**. A click or a global hotkey then starts what is missing and moves every window into its zone. Windows that are already open are reused.
+
+It is written in Rust with `egui`, has no Electron or Node.js runtime, and keeps its configuration in one readable JSON file.
+
+## Features
+
+- **Visual zone editor:** draw zones on a true-to-scale preview of all monitors, then move, resize and drag them onto another monitor. Snapping docks zones to borders, halves, thirds, quarters and neighbouring zones without overlaps.
+- **Applications, not command lines:** pick any installed desktop app from a searchable list. Apps you already use come first, terminals are marked, and **Custom command…** remains available.
+- **Terminal programs:** run `herdr`, `htop` or any other program inside your terminal (Ptyxis, GNOME Terminal, Console, Ghostty, kitty and more). Repeated launches reuse the running session.
+- **Reuses open windows:** an open window of the right app is moved instead of starting a second one. Several zones with the same app each get their own window, and HerdCtrl never guesses from window titles.
+- **Global hotkeys from a tiny tray process:** `herdctrl --tray` owns the hotkeys and shows a tray menu with every view. It needs about 2 MB of its own memory, keeps running after you close the editor, and can start at login.
+- **Live launch feedback:** each zone shows *opening…*, *placed* or *failed*. **Retry zone** repeats only the zones that failed, and errors from the tray arrive as desktop notifications.
+- **Respects panels and docks:** on GNOME, zones fill each monitor's work area, so the top bar and a fixed dock stay visible.
+- **Multi-monitor aware:** negative offsets, mixed resolutions and scaling. **Identify monitors** shows the matching number on every screen.
+- **Dark, light or system appearance:** Inter and JetBrains Mono are embedded, and the system setting is read from the XDG settings portal.
+
+## Screenshots
+
+These images are rendered from the real editor code with fixed sample data, not from a live desktop, so they contain no personal windows or paths. [How to reproduce them](docs/images/README.md).
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/screenshot-launching.png" alt="A view launching: three zones placed, two still opening, with per-zone chips below the canvas"></td>
+    <td width="50%"><img src="docs/images/screenshot-launch-failed.png" alt="Light theme after a launch in which one Zen Browser zone failed, with a Retry zone 4 button and the error message"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Live progress per zone while a view launches</sub></td>
+    <td align="center"><sub>A failed zone is marked and can be retried on its own</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/screenshot-app-picker.png" alt="Application picker with a search field, apps used in your views first and terminal apps marked"></td>
+    <td width="50%"><img src="docs/images/screenshot-hotkey.png" alt="Hotkey recorder waiting for a key combination next to the view name"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Pick an installed app with the keyboard or mouse</sub></td>
+    <td align="center"><sub>Record a global hotkey by pressing the whole combination</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/screenshot-editor-light.png" alt="The editor in the light theme"></td>
+    <td width="50%"><img src="docs/images/screenshot-first-run.png" alt="First-start checklist: GNOME extension connected, four monitors detected, create your first view, start at login"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Light theme</sub></td>
+    <td align="center"><sub>First start walks through the setup</sub></td>
+  </tr>
+</table>
+
+## Supported desktops
+
+| Session | Status |
+|---|---|
+| Ubuntu **X11** with an EWMH window manager | Supported. Uses `xrandr` and `wmctrl`. |
+| **GNOME 50 on Wayland** | Supported with the bundled HerdCtrl Shell extension. Native Wayland and XWayland windows. |
+| Other Wayland compositors (KDE, Hyprland, Sway, …) | Not supported. HerdCtrl says so instead of silently trying. |
+
+## Install from source
+
+There are no release packages yet. Build with a stable Rust toolchain ([rustup](https://rustup.rs)):
 
 ```sh
-sudo apt-get install build-essential pkg-config libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-xkb1 libgl1-mesa-dev wmctrl x11-xserver-utils
+sudo apt-get install build-essential pkg-config libx11-dev libxi-dev libxcursor-dev \
+  libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-xkb1 libgl1-mesa-dev \
+  wmctrl x11-xserver-utils
+git clone https://github.com/pelmenipower/HerdCtrl.git
+cd HerdCtrl
 cargo build --release --locked
 ./target/release/herdctrl
 ```
 
-Install a stable Rust toolchain using rustup before building. X11 runtime tools are `xrandr`, `wmctrl`, and GNU `timeout`. GNOME/Wayland talks to the Shell extension over the session D-Bus directly instead of using `wmctrl`; `scripts/check-gnome.py` additionally needs `gdbus` (Ubuntu package `libglib2.0-bin`). The current Rust GUI renders through X11/XWayland and system OpenGL libraries; the GNOME bridge can control both native Wayland and XWayland windows. This application has no Electron or Node.js runtime.
-
-## GNOME 50 / Wayland setup
-
-Install and enable the bundled extension once, from a terminal in this repository:
+On **GNOME 50 / Wayland**, install the Shell extension once, log out and back in, then enable it:
 
 ```sh
 bash scripts/install-gnome-extension.sh
-```
-
-This installs the extension for your user with GNOME's own installer. If GNOME has not discovered it yet, log out and back in, then enable it:
-
-```sh
 gnome-extensions enable herdctrl@herdctrl.local
 ```
 
-When updating an already loaded extension, log out and back in to load the new code. Start HerdCtrl and select **Refresh displays**. The status should say **GNOME / Wayland**, and connected monitors should appear in the canvas. A read-only diagnostic is available:
+The top bar of the editor should then show **GNOME 50 · Wayland** and **Extension connected**. On GNOME, the tray icon needs the AppIndicator extension, which Ubuntu enables by default. More details are in the [user guide](docs/manual.md#installation).
 
-```sh
-python3 scripts/check-gnome.py
-```
+## Quick start
 
-Global shortcuts use compositor grabs via the extension. Conflicts appear in Activity. Keep HerdCtrl open; stale grabs expire within about 20 seconds after a crash or exit, and disabling the extension releases them immediately. Only one HerdCtrl instance can own GNOME shortcuts at a time, with up to 256 configured shortcuts. GNOME shortcuts identify letter keys according to the current keyboard layout; the X11 backend uses physical key codes.
+1. Start `herdctrl`. The first-start card checks the extension and your monitors.
+2. Click **Create view**, then **Draw zone**, and drag a rectangle on a monitor.
+3. Pick an app. For a terminal, also enter the **Program in terminal**, for example `herdr`.
+4. Click **Record** next to the view name and press a combination such as Super+Alt+D.
+5. **Save** (Ctrl+S) and press your hotkey, or click **Launch view**.
 
-To build the distributable extension ZIP separately, run `python3 scripts/package-gnome-extension.py`. It is written to `target/herdctrl@herdctrl.local.shell-extension.zip`. GNOME 50 is the compatibility target. Launching, resizing and monitor assignment have been tested on GNOME 50.1 with four physical displays; remaining acceptance limits are recorded in `VALIDATION.md`.
+The tray keeps listening for the hotkey after you close the editor. Turn on **Start at login** to have it ready after every login.
 
-If startup reports `Library libxkbcommon-x11.so could not be loaded`, install both `libxkbcommon-x11-0` and `libxcb-xkb1`. These libraries are required even in a Wayland session because the Rust GUI uses XWayland.
+## Measured footprint
 
-An opt-in live launch-engine test opens temporary undecorated GTK windows on every connected monitor, using both native Wayland and XWayland. It checks dimensions and monitor assignment, exact XWayland coordinates, no-window timeouts and disconnected-target rejection. Requires `python3-gi`, `gir1.2-gtk-4.0` and `xwininfo` (`x11-utils`); test windows close automatically. It does not change saved profiles:
+| Target (PRD) | Measured | |
+|---|---|---|
+| Binary < 15 MB | 7.8 MB release binary | ✅ |
+| Warm start < 100 ms | 69 ms to a visible editor window (median of 5, GNOME 50) | ✅, measured to window visibility, not first frame |
+| RAM < 30 MB | Tray: 1.8 MB own memory (8.7 MB VmRSS). Editor: 75.7 MB VmRSS, mostly the Mesa/LLVM OpenGL driver | ❌ for the editor |
 
-```sh
-HERDCTRL_LIVE_GNOME=1 cargo test --locked gnome_live_launch_and_resize_on_each_monitor -- --ignored --nocapture --test-threads=1
-```
+How these numbers were taken, and what is still open, is in [VALIDATION.md](VALIDATION.md).
 
-The report is written to `target/gnome-live-acceptance.json`. Native Wayland absolute window origins, fractional scaling and monitor hotplug still require separate acceptance.
-
-Monitor identification uses temporary native viewports from the same executable and the existing backend for their placement. It needs no extension update or additional runtime. To check the actual window positions, automatic expiry and cancellation on GNOME, build the release executable first, then run:
-
-```sh
-cargo build --release --locked
-HERDCTRL_LIVE_GNOME=1 cargo test --locked gnome_live_identification_positions_and_cleans_up_labels -- --ignored --nocapture --test-threads=1
-```
-
-The test also requires `xprop` and `xwininfo` from `x11-utils`. It opens labels twice and leaves saved layouts unchanged.
-
-## Use
-
-The editor has four areas: the **views and zones** list on the left, the **canvas** with your monitors in the middle, the selected zone's **properties** on the right, and the **last launch** below the canvas. The top bar shows the session, the GNOME extension and whether the tray is listening for hotkeys; click the tray status to start a stopped tray. The round icon at the top right switches the appearance between system, dark and light; the choice is stored in `~/.config/herdctrl/ui.json`. With **system**, HerdCtrl reads the desktop's light/dark preference from the XDG settings portal at startup.
-
-1. Create a view with **+** in the sidebar. On first start, a setup card checks the extension and monitors and offers **Create view** and **Start at login**.
-2. Select **Draw zone**, then drag a rectangle on a monitor. The application picker opens automatically.
-3. Search for an application and select it, or move with ↑↓ and press Enter. Applications already used in a view are listed first; terminals are marked. **Custom command…** opens the zone's advanced section instead. Drag zones within a monitor or onto another monitor; resize with the bottom-right grip. A transfer keeps the relative size and application, updates the monitor, and snaps into free space on the destination. A full destination leaves the zone at its last valid position; Escape restores the original monitor and bounds. In the sidebar, drag zones to change their launch order.
-4. The properties panel edits the zone name, application, program in a terminal, monitor, geometry (percent of the monitor's work area, with the resulting pixels) and launch delay. **Advanced** holds a custom command and Run in terminal.
-5. Optionally assign a global hotkey next to the view name: click **Record**, then press the whole combination, for example hold Super+Alt and press D. At least one modifier (Super, Ctrl, Alt or Shift) is required; Escape or **Cancel** stops recording; focusing a text field stops it too; unsupported keys show a hint. **Clear** removes the hotkey. The layout stores it as text such as `Super+Alt+KeyD`. egui does not report Super on Linux, so the recorder asks the X server (the editor runs on X11/XWayland) whether Super is held. Shortcuts the desktop or the running tray already grab never reach the recorder; to record the current combination again, clear it and save first.
-6. **Save** (Ctrl+S) writes the layouts; the tray picks up saved hotkeys within about a second. **Launch view** starts the selected view. During a launch each zone on the canvas shows *opening…*, *placed* or *failed*, and the panel below lists the result per zone. **Retry zone** launches only the zones that failed. **Show log** shows all messages.
-
-**Delete view** (in the **…** menu) asks for confirmation. The deletion, and the changed hotkey assignment of the remaining views, takes effect when you save. **Duplicate view** copies the selected view without its hotkey.
-
-The interface uses Inter and JetBrains Mono, embedded from `assets/fonts` under the SIL Open Font License 1.1 (license texts beside the fonts).
-
-### Tray and global hotkeys
-
-Global hotkeys are owned by a small background process, `herdctrl --tray`, with an icon in the top bar (on GNOME this needs the AppIndicator extension, enabled by default on Ubuntu). It has no editor window or renderer, so it stays running with little memory after you close the editor. Starting `herdctrl` opens the editor and starts the tray if it is not running yet; saving layouts restarts it if you quit it. The tray reloads `layouts.json` when it changes.
-
-The tray menu lists every view with its hotkey to launch it, plus **Edit layouts…**, **Start at login** (writes or removes `~/.config/autostart/herdctrl.desktop`) and **Quit HerdCtrl**. Only one tray and one editor run per layouts file; a second start exits. Successful placements stay quiet; launch errors, taken shortcuts and configuration errors appear as desktop notifications. The desktop may already reserve a shortcut.
-
-Monitor numbers and connector names appear as small captions above each screen preview, with space between preview rows so captions cannot cover zones. Hover a caption for its resolution.
-
-**Identify monitors** briefly shows a large matching number on every screen. Use those same numbers in the canvas and each zone's Monitor menu; **Hide numbers** dismisses the labels early. Numbers follow the current screen arrangement (top to bottom, left to right). Layouts continue to store connector names, so renumbering after a display change does not reassign a saved zone.
-
-**Snap zones** is enabled by default. Drawing, moving and resizing dock to screen borders, halves, thirds, quarters and neighbouring edges while avoiding overlaps. Guides appear during a gesture. **Align edges** tidies existing imprecise zones; overlapping zones are highlighted and explained. Very crowded layouts may still require manual resizing. Turn snapping off for deliberate free placement; exact numeric edits under Advanced remain available. Overlapping saved/numeric layouts are preserved and flagged rather than silently rewritten.
-
-Launching a view arranges an already open window of each selected application. A missing application window is started automatically. If several matching windows exist, HerdCtrl chooses the lowest stable window ID not already assigned to another zone in that view; it does not use window titles to guess. Repeated launches reuse those windows.
-
-For a terminal session, select **Terminal**, then enter the program under **Program in terminal**, for example `herdr`. HerdCtrl opens the terminal and runs that program inside it. Repeated launches reuse the matching session. Existing simple terminal programs can also be recognized when the terminal process owns a single window; shared multi-window terminal processes are treated conservatively. For a custom command, **Advanced → Run in terminal** uses your default terminal instead (the `xdg-terminal-exec` choice, otherwise the first installed of Ptyxis, GNOME Terminal, Console, Ghostty, Konsole, Alacritty, kitty, WezTerm or foot). Enabling this is necessary for interactive programs entered as custom commands.
-
-Views are stored in `$XDG_CONFIG_HOME/herdctrl/layouts.json`, falling back to `~/.config/herdctrl/layouts.json`. Saves use a private temporary file and atomic rename. Invalid existing configuration causes a startup error and is not silently overwritten. A stale `layouts.json.tmp` after interruption must be inspected and removed before saving again. Run one HerdCtrl instance per configuration directory.
-
-Application discovery reads the current user's and system's XDG desktop entries on a background worker, including localized names and desktop visibility settings. The layout stores the selected application's ID and name; launch workers resolve its current executable and arguments. Applications launch directly without a shell. New GNOME Terminal (Ptyxis) and Text Editor instances use their independent-instance option so their windows can be matched reliably. Terminal programs run through `sh -c` inside the selected terminal. A removed application produces a message asking you to choose another one.
-
-Custom commands remain optional under **Advanced** and run through `sh -c` with the current user's privileges. Entering one replaces the application selection. Only launch trusted commands. For custom terminal sessions, include the terminal executable, for example `xterm -e htop`. Existing command-based layouts still load.
-
-## Window matching and limitations
-
-Launch workers run outside the GUI thread. They match existing application windows using a dedicated native executable or desktop-entry process identity. Shared interpreters alone cannot identify an app, and terminal-program sessions are matched separately. Each window is reserved once per view; complete view runs are serialized on a worker to avoid duplicate launches on rapid repeated activation. If no eligible window exists, workers track the spawned process and descendants, including new windows delegated to an identifiable existing application process. X11 uses `wmctrl`; GNOME uses the extension's Mutter window API. Both recheck window PID before movement. Polling expires after five seconds following launch delay; individual helper calls have a two-second timeout. Launched applications remain running after a positioning timeout.
-
-Some wrapper scripts, sandboxed apps and shared terminal processes cannot be identified confidently. HerdCtrl does not guess from a title; it can start a new window or report a timeout in those cases. If multiple zones need the same application, existing windows are used first; each further zone opens another window. All zones of the same selected application (including terminal zones with a program) launch one after another, so each costs up to its launch delay plus five seconds. Apps that are already running are started through their desktop entry's new-window action when they provide one. An app that is running but has no such action usually only focuses its existing window; that zone then reports that no second window opened. On GNOME, zones fill each monitor's work area, so the top bar and a fixed dock stay visible (requires the extension from 2026-11-09 or later; after updating it, log out and back in). On X11 and with an older extension, zones use the whole monitor. A newly opened window is placed again 0.25, 0.75 and 1.75 s after the first placement, because apps such as Ptyxis (restore-window-size) or Zen apply their saved size or position after the window appears. A new window is first matched to the zone's own process tree; terminal servers that host all windows in one process (e.g. GNOME Console, GNOME Terminal) are matched by launch order. Mixing an application zone and a custom command for the same program in one view is not supported, because their windows cannot be told apart reliably. For custom non-terminal commands, use a new-instance option when needed. Very short-lived intermediaries may exit before descendant discovery. Window managers and applications can enforce minimum sizes or adjust decorations, so pixel-perfect outer-window placement needs integration verification on the target desktop.
-
-On X11, monitor geometry comes from `xrandr --verbose`, including negative offsets. The canvas displays the XRandR horizontal transform factor; per-monitor toolkit UI scale, nonuniform transforms and arbitrary rotation are not fully modeled. Placement uses X11 pixel coordinates. On GNOME/Wayland, the extension supplies connector names, logical monitor rectangles and compositor scale. Placement uses the same logical coordinates without multiplying scale again; mirrored connectors share a logical monitor. Disconnected monitors cause a visible error instead of silently redirecting a zone.
-
-## Development checks
+## Development
 
 ```sh
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 cargo build --release --locked
-node scripts/gnome-controller.test.mjs
-python3 scripts/package-gnome-extension.py
 ```
 
-CI runs these checks on Ubuntu and uploads the compiled binary and extension bundle as workflow artifacts. Node.js is needed only for the compositor-independent extension tests. CI does not publish releases.
+Contributors and coding agents follow [AGENTS.md](AGENTS.md) (rules) and [PRD.md](PRD.md) (product spec). The [user guide](docs/manual.md#development) explains the integration tests on X11 and GNOME, the UI snapshots and the memory measurement. Pull requests go to `staging`; `main` only receives merges from `staging`.
 
-`cargo test` also drives the editor with simulated pointer and keyboard input through `egui_kittest` (add a view, save with Ctrl+S, delete a view through its menu, choose an app with the arrow keys); these need no GPU. To review the interface without opening a window, render its main states (edit, launching, failed, app picker, hotkey recording, first start; dark and light) to `target/ui-snapshots/*.png`. This opt-in test uses `egui_kittest` with a wgpu adapter and fixed sample data; it does not compare against stored images:
-
-```sh
-cargo test --locked render_ui_snapshots -- --ignored
-```
-
-The window icon is embedded from `assets/icon.png`; `assets/icon.svg` is its editable source. To regenerate the 256-pixel PNG with the optional `librsvg2-bin` development tool:
-
-```sh
-rsvg-convert -w 256 -h 256 assets/icon.svg -o assets/icon.png
-```
-
-See [VALIDATION.md](VALIDATION.md) for measured results and remaining PRD acceptance work.
-
-## X11 acceptance checks
-
-On an Ubuntu X11 desktop, install the test tools in addition to the runtime dependencies:
-
-```sh
-sudo apt-get install xterm xdotool
-cargo test --locked x11_ -- --ignored --test-threads=1 --nocapture
-cargo build --release --locked
-python3 scripts/check-x11.py --output /tmp/herdctrl-x11-acceptance.json
-```
-
-The opt-in Rust tests launch temporary terminals on each active monitor, compare their geometry within a 32-pixel tolerance for decorations and character sizing, check that an unrelated window stays put, verify the no-window timeout, and reject a disconnected target before executing its command. Test terminals close after the test or expire automatically. Do not interact with the test windows while the checks run.
-
-The Python check uses a temporary configuration, starts and stops its own HerdCtrl instances, triggers `Ctrl+Alt+Shift+F10` while another application is focused, and records warm startup to a visible window plus RSS samples. Keep that shortcut free for the test. Visibility is a startup proxy; the PRD first-frame target still requires a separate measurement. Your saved layouts are not changed.
-
-CI also runs these checks under Xvfb and Openbox and uploads a JSON measurement artifact. Virtual-display results supplement the physical multi-monitor, scaling and editor checks in `VALIDATION.md`.
+The interface uses Inter and JetBrains Mono under the SIL Open Font License 1.1 (license texts in `assets/fonts`).

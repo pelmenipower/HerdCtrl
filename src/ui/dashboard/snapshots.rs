@@ -1,5 +1,7 @@
-//! Renders the editor's main states to PNG files for visual review against the mockups.
-//! Opt-in, because it needs a GPU adapter: `cargo test --locked render_ui_snapshots -- --ignored`.
+//! Renders the editor's main states to PNG files for visual review against the mockups, and the
+//! README gallery in `docs/images`. Opt-in, because both need a GPU adapter:
+//! `cargo test --locked render_ui_snapshots -- --ignored` and
+//! `cargo test --locked render_docs_screenshots -- --ignored`.
 use super::*;
 use crate::core::{config::Application, launcher::Outcome, monitor::Area};
 use egui_kittest::Harness;
@@ -89,6 +91,8 @@ pub(super) fn dashboard(path: PathBuf) -> Dashboard {
     dashboard.monitors = monitors();
     dashboard.selected_zone = Some(1);
     dashboard.tray_running = true;
+    // Fixed, so images don't depend on this machine's autostart entry.
+    dashboard.autostart = true;
     dashboard.applications = vec![
         app("zen", "Zen Browser", "Browse the web", false),
         app(
@@ -138,14 +142,56 @@ pub(super) fn harness<'a>(dashboard: Dashboard, theme: Theme) -> Harness<'a, Das
 }
 
 fn render(name: &str, theme: Theme, setup: impl FnOnce(&mut Dashboard)) {
+    render_to("target/ui-snapshots", name, theme, setup);
+}
+
+fn render_to(directory: &str, name: &str, theme: Theme, setup: impl FnOnce(&mut Dashboard)) {
     let mut dashboard = dashboard(PathBuf::new());
     setup(&mut dashboard);
     let mut harness = harness(dashboard, theme);
     harness.run_steps(2);
     let image = harness.render().expect("render with a wgpu adapter");
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/ui-snapshots");
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(directory);
     std::fs::create_dir_all(&directory).unwrap();
     image.save(directory.join(format!("{name}.png"))).unwrap();
+}
+
+fn launching(d: &mut Dashboard) {
+    let mut run = LaunchRun::new(0, 5, (0..5).collect());
+    for zone in 0..3 {
+        run.apply(&report(zone, Outcome::Arranged));
+    }
+    d.run = Some(run);
+}
+
+fn failed(d: &mut Dashboard) {
+    let mut run = LaunchRun::new(0, 5, (0..5).collect());
+    for zone in [0, 1, 2] {
+        run.apply(&report(zone, Outcome::Arranged));
+    }
+    run.apply(&report(4, Outcome::Opened));
+    run.apply(&report(
+        3,
+        Outcome::Failed("No new Zen Browser window appeared within 5 s.".into()),
+    ));
+    d.run = Some(run);
+    d.selected_zone = Some(3);
+}
+
+fn picker(d: &mut Dashboard) {
+    d.app_picker = Some(AppPicker::new(0, 1));
+}
+
+fn recording(d: &mut Dashboard) {
+    d.hotkey_recorder = Recorder::recording();
+    d.dirty = true;
+}
+
+fn first_run(d: &mut Dashboard) {
+    d.config.views.clear();
+    d.selected_zone = None;
+    d.tray_running = false;
+    d.autostart = false;
 }
 
 #[test]
@@ -153,37 +199,24 @@ fn render(name: &str, theme: Theme, setup: impl FnOnce(&mut Dashboard)) {
 fn render_ui_snapshots() {
     for (suffix, theme) in [("dark", Theme::Dark), ("light", Theme::Light)] {
         render(&format!("edit-{suffix}"), theme, |_| {});
-        render(&format!("launching-{suffix}"), theme, |d| {
-            let mut run = LaunchRun::new(0, 5, (0..5).collect());
-            for zone in 0..3 {
-                run.apply(&report(zone, Outcome::Arranged));
-            }
-            d.run = Some(run);
-        });
-        render(&format!("failed-{suffix}"), theme, |d| {
-            let mut run = LaunchRun::new(0, 5, (0..5).collect());
-            for zone in [0, 1, 2] {
-                run.apply(&report(zone, Outcome::Arranged));
-            }
-            run.apply(&report(4, Outcome::Opened));
-            run.apply(&report(
-                3,
-                Outcome::Failed("No new Zen Browser window appeared within 5 s.".into()),
-            ));
-            d.run = Some(run);
-            d.selected_zone = Some(3);
-        });
-        render(&format!("picker-{suffix}"), theme, |d| {
-            d.app_picker = Some(AppPicker::new(0, 1));
-        });
-        render(&format!("recording-{suffix}"), theme, |d| {
-            d.hotkey_recorder = Recorder::recording();
-            d.dirty = true;
-        });
-        render(&format!("first-run-{suffix}"), theme, |d| {
-            d.config.views.clear();
-            d.selected_zone = None;
-            d.tray_running = false;
-        });
+        render(&format!("launching-{suffix}"), theme, launching);
+        render(&format!("failed-{suffix}"), theme, failed);
+        render(&format!("picker-{suffix}"), theme, picker);
+        render(&format!("recording-{suffix}"), theme, recording);
+        render(&format!("first-run-{suffix}"), theme, first_run);
     }
+}
+
+/// Regenerates the README and manual gallery. Review every image before committing it.
+#[test]
+#[ignore = "needs a GPU adapter; overwrites the PNGs in docs/images"]
+fn render_docs_screenshots() {
+    let docs = "docs/images";
+    render_to(docs, "screenshot-editor", Theme::Dark, |_| {});
+    render_to(docs, "screenshot-editor-light", Theme::Light, |_| {});
+    render_to(docs, "screenshot-launching", Theme::Dark, launching);
+    render_to(docs, "screenshot-launch-failed", Theme::Light, failed);
+    render_to(docs, "screenshot-app-picker", Theme::Dark, picker);
+    render_to(docs, "screenshot-hotkey", Theme::Dark, recording);
+    render_to(docs, "screenshot-first-run", Theme::Light, first_run);
 }
