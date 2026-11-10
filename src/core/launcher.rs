@@ -327,6 +327,7 @@ fn launch_new(
     } else if !zone.command.trim().is_empty() {
         let mut command = Command::new("sh");
         command.args(["-c", &zone.command]);
+        crate::os::child_env::clean(&mut command);
         command
     } else {
         return Err("Choose an application for this zone before launching".into());

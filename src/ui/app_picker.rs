@@ -57,7 +57,7 @@ impl AppPicker {
                     .inner_margin(Margin::symmetric(14, 10))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("🔍").color(p.muted));
+                            theme::search_icon(ui, p.muted);
                             let search = ui.add(
                                 egui::TextEdit::singleline(&mut self.query)
                                     .frame(false)

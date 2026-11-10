@@ -45,7 +45,7 @@ Kontraste (nachgerechnet 2026-11-10): `text` auf `bg`, `panel` und `raised` 13:1
 | Abschnittsbeschriftung (`caps`) | Inter SemiBold, Großbuchstaben, +0,6 Laufweite | 11 |
 | `Monospace` (Befehle, Pixel, Anschlüsse, Tasten) | JetBrains Mono | 12 |
 
-`theme::strong()` setzt Inter SemiBold für Namen und Hauptknöpfe. Die Schriften sind eingebettet (`assets/fonts`, SIL OFL 1.1); egui-eigene Schriften bleiben als Rückfall für Symbole wie ▶.
+`theme::strong()` setzt Inter SemiBold für Namen und Hauptknöpfe. Die Schriften sind eingebettet (`assets/fonts`, SIL OFL 1.1). egui-eigene Schriften sind bewusst nicht dabei (gemessen etwa 0,4 MB Speicher und 1,4 MB Programmgröße). Jedes Symbol muss deshalb in Inter oder JetBrains Mono vorkommen oder gezeichnet werden (wie `search_icon` und `appearance_icon`). Fehlende Zeichen erscheinen sonst als leeres Kästchen; vor dem Einsatz eines neuen Zeichens die Abdeckung prüfen.
 
 ## Maße
 
@@ -66,7 +66,7 @@ Kontraste (nachgerechnet 2026-11-10): `text` auf `bg`, `panel` und `raised` 13:1
 | `pill` + `Tone` | Statusanzeige im Kopf mit Punkt und Text |
 | `dot` | Kleiner Statuspunkt |
 | `hatch` | Schraffur für reservierte Bereiche |
-| `logo`, `appearance_icon` | Gezeichnetes HerdCtrl-Zeichen und Darstellungsumschalter |
+| `logo`, `appearance_icon`, `search_icon` | Gezeichnetes HerdCtrl-Zeichen, Darstellungsumschalter und Lupe |
 
 Neue Oberflächen setzen sich aus diesen Bausteinen zusammen. Ein neuer Baustein kommt nach `theme.rs`, nicht in die Komponente.
 

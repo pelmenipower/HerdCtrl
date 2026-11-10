@@ -698,7 +698,7 @@ impl Dashboard {
             ui.spacing_mut().item_spacing.x = 6.0;
             let draw = ui
                 .add(
-                    egui::Button::new("⬚  Draw zone")
+                    egui::Button::new("▢  Draw zone")
                         .selected(self.canvas.drawing)
                         .min_size(Vec2::new(0.0, 30.0)),
                 )
@@ -728,7 +728,7 @@ impl Dashboard {
                         .start(self.backend, self.monitors.clone());
                 }
             }
-            if theme::button(ui, "⟳  Refresh displays").clicked() {
+            if theme::button(ui, "↻  Refresh displays").clicked() {
                 self.identification.stop();
                 self.refresh();
             }

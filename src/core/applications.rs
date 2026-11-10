@@ -33,6 +33,7 @@ impl InstalledApp {
         command.args(&argv[1..]);
         command.env("GIO_LAUNCHED_DESKTOP_FILE", &self.desktop_file);
         command.env_remove("HERDCTRL_TERMINAL_COMMAND");
+        crate::os::child_env::clean(&mut command);
         if let Some(directory) = &self.directory {
             command.current_dir(directory);
         }
@@ -363,6 +364,21 @@ mod tests {
             &[]
         )
         .is_err());
+    }
+
+    #[test]
+    fn launched_apps_do_not_inherit_the_editors_renderer_variables() {
+        // The only test that records; the editor does this in `renderer::prepare`.
+        crate::os::child_env::record(vec!["VK_LOADER_DRIVERS_SELECT"]);
+        let app = prepare(
+            &entry("game", "[Desktop Entry]\nName=Game\nExec=/bin/true\n"),
+            &[],
+        )
+        .unwrap();
+        assert!(app
+            .command()
+            .get_envs()
+            .any(|(name, value)| name == "VK_LOADER_DRIVERS_SELECT" && value.is_none()));
     }
 
     #[test]

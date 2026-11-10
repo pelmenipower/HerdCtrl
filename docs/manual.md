@@ -33,7 +33,17 @@ HerdCtrl arranges application windows into named **views**. A view is a set of *
 
 Other Wayland compositors are detected and reported as **Wayland · unsupported**. HerdCtrl never routes Wayland window control through `wmctrl`.
 
-The editor itself renders through X11 or XWayland with the system OpenGL libraries. On GNOME this does not limit which windows it can control: native Wayland and XWayland windows are both supported.
+The editor itself runs through X11 or XWayland. On GNOME this does not limit which windows it can control: native Wayland and XWayland windows are both supported.
+
+### Renderer
+
+The editor draws with **Vulkan** (wgpu) and lets the Vulkan loader open only the driver of the **primary GPU** (the one the firmware booted on, from `/sys/class/drm`). That avoids loading LLVM, which Mesa's OpenGL driver and the lavapipe software driver need, and keeps the editor at 29 to 31 MB instead of about 85 MB. On laptops with a second, discrete GPU, that GPU stays asleep.
+
+- If no Vulkan device works, the editor restarts itself with **OpenGL** and prints *Vulkan renderer unavailable (…); using OpenGL*. This happens in virtual machines and on old GPUs, and costs one extra start.
+- To force OpenGL, start it with `HERDCTRL_RENDERER=glow`. Do the same if the window shows drawing errors or the editor crashes after a GPU reset.
+- A driver choice you set yourself is left alone: `VK_LOADER_DRIVERS_SELECT`, `VK_LOADER_DRIVERS_DISABLE`, `VK_ICD_FILENAMES`, `VK_DRIVER_FILES` or `VK_ADD_DRIVER_FILES`. Use `VK_LOADER_DRIVERS_SELECT` to make the editor draw on another GPU.
+- The variables HerdCtrl sets for its own window are removed again for every program it starts, so your apps see all drivers as usual.
+- The monitor identification labels always use OpenGL; they are open for a few seconds only.
 
 ### Build
 
@@ -42,7 +52,7 @@ Install a stable Rust toolchain with [rustup](https://rustup.rs), then:
 ```sh
 sudo apt-get install build-essential pkg-config libx11-dev libxi-dev libxcursor-dev \
   libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-xkb1 libgl1-mesa-dev \
-  wmctrl x11-xserver-utils
+  libvulkan1 mesa-vulkan-drivers wmctrl x11-xserver-utils
 cargo build --release --locked
 ./target/release/herdctrl
 ```
@@ -315,7 +325,7 @@ Unknown fields are rejected. Saving writes a private temporary file and renames 
 
 ## Limitations
 
-- **Memory:** the editor uses about 76 MB, mostly the Mesa/LLVM OpenGL driver; the PRD target is 30 MB. The tray, which keeps running, needs about 2 MB of its own memory. Details in [VALIDATION.md](../VALIDATION.md).
+- **Memory:** the editor needs 29 to 31 MB with the Vulkan renderer (measured on an Intel GPU; the PRD target of 30 MB is met only in some starts), and about 85 MB after a fallback to OpenGL. NVIDIA's own driver was not measured. On AMD GPUs the Vulkan driver itself links LLVM, so the editor needs more there. The tray, which keeps running, needs about 2 MB of its own memory. Details in [VALIDATION.md](../VALIDATION.md).
 - Wrapper scripts, sandboxed apps and terminal servers that host every window in one process (GNOME Console, GNOME Terminal) cannot always be identified. HerdCtrl does not guess. It starts a new window, matches by launch order or reports a timeout.
 - Mixing an application zone and a custom command for the **same program** in one view is not supported, because their windows cannot be told apart reliably.
 - Window managers and apps can enforce minimum sizes or add decorations, so pixel-exact outer placement depends on the desktop.
@@ -332,6 +342,7 @@ Unknown fields are rejected. Saving writes a private temporary file and renames 
 | Tray icon missing | Enable the AppIndicator extension. Hotkeys work without the icon. |
 | Hotkey does nothing | Check the tray pill in the header, save after recording, and look for a conflict notification. The desktop may own the combination. |
 | A zone keeps saying *No new … window appeared* | The app only focuses its existing window. Use one window per app, or a custom command with a new-window option. |
+| Editor window stays empty, shows drawing errors or crashes | Start it with `HERDCTRL_RENDERER=glow` to use OpenGL, and report the GPU and driver. |
 | Zones cover the top bar | Update the extension and log out and back in, so it reports the work area. |
 
 ## Development
@@ -398,7 +409,7 @@ cargo build --release --locked
 scripts/measure-rss.sh 5
 ```
 
-The script starts the editor with a temporary configuration, waits for the window that belongs to its own PID, and reports the time to a visible window, VmRSS and RssAnon.
+The script starts the editor with a temporary configuration, waits for the window that belongs to its own PID, and reports the time to a visible window, VmRSS and RssAnon. `HERDCTRL_RENDERER=glow scripts/measure-rss.sh 5` measures the OpenGL fallback for comparison.
 
 ### Icon
 
