@@ -9,6 +9,7 @@ HerdCtrl ordnet Programmfenster in benannten **Views** an. Eine View besteht aus
 Die Oberfläche ist englisch. Bedienelemente stehen hier mit ihrem Namen in der App, zum Beispiel **Launch view**.
 
 - [Installation](#installation)
+- [Update und Deinstallation](#update-und-deinstallation)
 - [Erster Start](#erster-start)
 - [Der Editor](#der-editor)
 - [Views](#views)
@@ -47,7 +48,41 @@ Der Editor zeichnet mit **Vulkan** (wgpu) und lässt den Vulkan-Loader nur den T
 - Die Variablen, die HerdCtrl für sein eigenes Fenster setzt, entfernt es für jedes Programm, das es startet. Deine Anwendungen sehen also wie gewohnt alle Treiber.
 - Die Monitornummern bei **Identify monitors** nutzen immer OpenGL, sie sind nur wenige Sekunden offen.
 
-### Bauen
+### Installieren (empfohlen)
+
+Für Ubuntu 24.04 oder neuer (x86_64), Release 0.2.0 oder neuer:
+
+```sh
+curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/install.sh | bash
+```
+
+Der Installer arbeitet nur für deinen Benutzer, ohne `sudo` für HerdCtrl selbst. Er lädt das Release, prüft die Prüfsummen (und die Sigstore-Signatur, wenn `cosign` installiert ist) und legt dann alles ab, bevor er etwas überschreibt:
+
+- `~/.local/bin/herdctrl` und `~/.local/bin/herdctrl-update`
+- Desktop-Eintrag und Icons unter `~/.local/share`
+- `~/.local/share/herdctrl/installed-version` (Stempel mit der installierten Version)
+- unter GNOME/Wayland die GNOME-Shell-Erweiterung
+
+Fehlende Laufzeitpakete installiert er mit APT; dabei fragt `sudo` nach deinem Passwort. `--no-packages` überspringt das. `~/.local/bin` muss in deinem `PATH` liegen; sonst sagt der Installer es dir.
+
+Optionen (`bash install.sh --help`):
+
+| Option | Wirkung |
+|---|---|
+| `--version X.Y.Z` | Dieses Release statt des neuesten installieren |
+| `--archive PATH` | Lokales `herdctrl-vX.Y.Z-linux-x86_64.tar.gz` installieren. **Prüft keine Prüfsummen**; nimm nur Dateien, denen du vertraust. |
+| `--check` | Installierte und neueste Version melden; Exit-Code 10, wenn ein Update bereitsteht |
+| `--reinstall` | Auch installieren, wenn diese Version schon installiert ist |
+| `--no-packages` | Fehlende Laufzeitpakete nicht mit APT installieren |
+| `--extension` | Die GNOME-Shell-Erweiterung auch außerhalb von GNOME/Wayland installieren |
+| `--no-extension` | Die Erweiterung nicht installieren |
+| `--uninstall`, `--purge` | Siehe [Update und Deinstallation](#update-und-deinstallation) |
+
+Exit-Codes: 0 Erfolg oder nichts zu tun, 1 Fehler, 2 falsche Bedienung, 10 Update verfügbar (`--check`).
+
+Der Installer gibt es erst ab Release 0.2.0. Release 0.1.0 hat noch keinen; dafür gilt weiter [Bauen](#bauen) oder das Tarball unter [Download prüfen](#download-prüfen). Windows folgt später.
+
+### Aus dem Quellcode bauen
 
 Installiere eine stabile Rust-Toolchain mit [rustup](https://rustup.rs), dann:
 
@@ -105,9 +140,47 @@ Sie braucht `gdbus` (Paket `libglib2.0-bin`). Das ZIP der Erweiterung baut `pyth
 
 Ziel ist GNOME 50. Andere GNOME-Versionen müssen eigens geprüft werden.
 
+Ohne Quellbaum (Installation per Installer) holt `herdctrl-update --extension` die Erweiterung aus dem Release. Bei einem Update der Erweiterung ist ein Neuanmelden nötig; der Installer weist darauf hin.
+
 ### Tray-Symbol
 
 Der Tray nutzt das StatusNotifierItem-Protokoll. GNOME zeigt ihn nur mit der AppIndicator-Erweiterung an (`ubuntu-appindicators@ubuntu.com`, unter Ubuntu standardmäßig an). Ohne Tray-Host funktionieren die Hotkeys trotzdem, nur das Symbol fehlt. Es erscheint, sobald ein Host da ist, zum Beispiel nach dem Entsperren.
+
+## Update und Deinstallation
+
+### Update
+
+- `herdctrl-update` prüft das neueste Release und installiert es, wenn es neuer ist. Einen laufenden Tray beendet es und startet ihn mit der neuen Version neu; ein offener Editor bleibt bis zum Schließen in der alten Version. Unter GNOME/Wayland wartet es nur dann 16 Sekunden, wenn der alte Tray hart beendet werden musste oder die vorherige Version unbekannt ist, damit GNOME seine Kürzel freigibt. Ohne grafische Sitzung läuft der alte Tray weiter, bis du ihn beendest.
+- `herdctrl-update --check` meldet nur die installierte und die neueste Version. Exit-Code 10 heißt: Update verfügbar.
+- Ohne installiertes `herdctrl-update` (oder aus einem Terminal ohne Pfad):
+
+```sh
+curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/update.sh | bash
+```
+
+  `update.sh` führt das installierte `herdctrl-update` aus, sonst den geprüften Installer des neuesten Releases. Optionen des Installers (`--reinstall`, `--version`, `--extension` …) gelten auch für `herdctrl-update`.
+- `herdctrl-update --extension` installiert die GNOME-Shell-Erweiterung nachträglich, ohne Quellbaum.
+- Im **Tray** erscheint bei einem neuen Release eine Benachrichtigung („HerdCtrl X is available“) und der Menüeintrag **Update to X…**. Er öffnet den Updater in einem Terminal.
+- Im **Editor** zeigt der Kopf die Pille **Update available · X**. Darin öffnet **Update now** den Updater in einem Terminal, **What's new** die Release-Notizen im Browser.
+
+Update per Installer gibt es ab Release 0.2.0. Eine Installation von 0.1.0 (per Quellcode oder Tarball) hat keinen Stempel; der Installer meldet sie als „unknown“ und ersetzt sie bei `herdctrl-update` oder dem Einzeiler.
+
+### Deinstallieren
+
+```sh
+herdctrl-update --uninstall           # Programm, Desktop-Eintrag, Icons, Erweiterung; deine Layouts bleiben
+herdctrl-update --uninstall --purge   # zusätzlich ~/.config/herdctrl
+```
+
+Der Installer beendet vorher den laufenden Tray und entfernt den Autostart-Eintrag, wenn er auf diese Installation zeigt. Ein Autostart-Eintrag, der ein anderes HerdCtrl startet, bleibt unberührt.
+
+### Update-Prüfung und Datenschutz
+
+Der Tray fragt höchstens einmal pro Tag per HTTPS bei github.com nach dem neuesten Release (ein `curl`-Aufruf, der nur die Weiterleitung von `releases/latest` liest). GitHub sieht dabei deine IP-Adresse und den curl-User-Agent; HerdCtrl sendet nichts anderes und lädt nichts herunter.
+
+- Ausschalten: Haken **Check for updates daily** im Tray-Menü wegnehmen, oder `HERDCTRL_NO_UPDATE_CHECK` setzen (zum Beispiel `HERDCTRL_NO_UPDATE_CHECK=1`). Mit der Variablen ist der Haken ausgegraut und es gibt keine Anfrage.
+- Ergebnis und Einstellung stehen in `~/.config/herdctrl/update.json` (siehe [Dateien](#dateien)).
+- `herdctrl --version` gibt die Version aus, `herdctrl --help` die Aufrufe (`--tray`, `--version`, `--help`).
 
 ## Erster Start
 
@@ -276,6 +349,8 @@ Programme, die sich selbst aktualisieren (die laufende Programmdatei erscheint a
 | *View-Name (Hotkey)* | Startet diese View. |
 | **Edit layouts…** | Öffnet den Editor. |
 | **Start at login** | Schreibt oder entfernt `~/.config/autostart/herdctrl.desktop`. |
+| **Check for updates daily** | Schaltet die tägliche Update-Prüfung (siehe [Update-Prüfung und Datenschutz](#update-prüfung-und-datenschutz)). |
+| **Update to X…** | Nur wenn ein neueres Release bekannt ist: öffnet den Updater in einem Terminal. |
 | **Quit HerdCtrl** | Beendet den Tray und gibt die Hotkeys frei. |
 
 - Der Editor startet beim Öffnen auch den Tray, falls er nicht läuft. Speichern im Editor startet ihn wieder, falls du ihn beendet hattest.
@@ -295,8 +370,10 @@ Das runde Symbol im Kopf wechselt zwischen **System**, **Dark** und **Light**. M
 |---|---|
 | `$XDG_CONFIG_HOME/herdctrl/layouts.json` (Standard `~/.config/herdctrl/layouts.json`) | Alle Views, Zonen und Hotkeys |
 | `~/.config/herdctrl/ui.json` | Darstellung |
+| `~/.config/herdctrl/update.json` | Update-Prüfung: Einstellung, Zeit der letzten Prüfung, neueste Version, zuletzt gemeldete Version |
+| `~/.local/share/herdctrl/installed-version` | Stempel des Installers mit der installierten Version |
 | `~/.config/autostart/herdctrl.desktop` | Existiert, solange **Start at login** an ist |
-| `$XDG_RUNTIME_DIR/herdctrl-{tray,editor}-<hash>.lock` | Sperren für Editor und Tray, ein Paar je Layout-Datei |
+| `$XDG_RUNTIME_DIR/herdctrl-{tray,editor}-<hash>.lock` | Sperren für Editor und Tray, ein Paar je Layout-Datei (der Hash ist FNV-1a über den Pfad und bleibt zwischen Toolchains gleich) |
 
 ### layouts.json
 

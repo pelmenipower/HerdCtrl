@@ -32,6 +32,7 @@ It is written in Rust with `egui`, has no Electron or Node.js runtime, and keeps
 - **Live launch feedback:** each zone shows *opening…*, *placed* or *failed*. **Retry zone** repeats only the zones that failed, and errors from the tray arrive as desktop notifications.
 - **Respects panels and docks:** on GNOME, zones fill each monitor's work area, so the top bar and a fixed dock stay visible.
 - **Multi-monitor aware:** negative offsets, mixed resolutions and scaling. **Identify monitors** shows the matching number on every screen.
+- **One-command install and updates:** `install.sh` and `herdctrl-update` install per user, verify checksums, and the tray and editor tell you when a new release is out.
 - **Dark, light or system appearance:** Inter and JetBrains Mono are embedded, and the system setting is read from the XDG settings portal.
 
 ## Screenshots
@@ -72,6 +73,16 @@ These images are rendered from the real editor code with fixed sample data, not 
 | Ubuntu **X11** with an EWMH window manager | Supported. Uses `xrandr` and `wmctrl`. |
 | **GNOME 50 on Wayland** | Supported with the bundled HerdCtrl Shell extension. Native Wayland and XWayland windows. |
 | Other Wayland compositors (KDE, Hyprland, Sway, …) | Not supported. HerdCtrl says so instead of silently trying. |
+
+## Install
+
+For releases from 0.2.0 on, one command installs HerdCtrl for the current user and verifies the download:
+
+```sh
+curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/install.sh | bash
+```
+
+Update later with `herdctrl-update`, from the tray menu or with the editor's update pill; remove it with `herdctrl-update --uninstall` (`--purge` also removes the configuration). The daily update check can be turned off; see the [user guide](docs/manual.md#install-with-one-command). Windows will follow later.
 
 ## Install from source
 

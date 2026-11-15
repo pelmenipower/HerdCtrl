@@ -45,6 +45,39 @@ The editor draws with **Vulkan** (wgpu) and lets the Vulkan loader open only the
 - The variables HerdCtrl sets for its own window are removed again for every program it starts, so your apps see all drivers as usual.
 - The monitor identification labels always use OpenGL; they are open for a few seconds only.
 
+### Install with one command
+
+For releases from 0.2.0 on, one command installs HerdCtrl for the current user (no `sudo` for the program itself):
+
+```sh
+curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/install.sh | bash
+```
+
+The installer downloads the release, verifies every file against `SHA256SUMS` before installing anything, installs missing runtime packages with APT (it asks for `sudo` only for that), and puts `herdctrl` and `herdctrl-update` into `~/.local/bin` and the desktop entry and icons into `~/.local/share`. On GNOME/Wayland it also installs the Shell extension; log out and back in once, then enable it as described below. Release 0.1.0 has no installer: use the archive or build from source as before.
+
+`bash install.sh --help` lists the options: `--version X.Y.Z`, `--archive PATH`, `--check`, `--reinstall`, `--no-packages`, `--extension`, `--no-extension`, `--uninstall`, `--purge`. `--archive` installs a local `herdctrl-vX.Y.Z-linux-x86_64.tar.gz` and does **not** check checksums. Exit codes: 0 success or nothing to do, 1 error, 2 usage error, 10 update available (`--check`).
+
+### Update
+
+- Terminal: `herdctrl-update` installs the latest release. `herdctrl-update --check` only reports the installed and latest version and exits with 10 if an update is available.
+- Without the installed script, run the one-liner again, or `curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/update.sh | bash`.
+- Tray: when a release is found, a notification appears once and the menu gets **Update to X…**.
+- Editor: the header shows an **Update available · X** pill with **Update now** and **What's new**.
+
+`herdctrl-update --extension` installs the GNOME Shell extension from the release, for installs without a source tree. `--reinstall` repeats the installation of the current version.
+
+### Uninstall
+
+`herdctrl-update --uninstall` removes the program, the desktop entry, the icons and the extension. Your configuration is kept. `herdctrl-update --uninstall --purge` removes `~/.config/herdctrl` as well.
+
+### Update check and privacy
+
+The tray asks GitHub once a day whether a newer release exists: one HTTPS request to `github.com`, sent with `curl`. GitHub sees your IP address and the `curl` user agent; nothing else is sent. Turn it off with the tray item **Check for updates daily**, or set `HERDCTRL_NO_UPDATE_CHECK` in the tray's environment; then no request is made. The result is stored in `update.json` next to `layouts.json`.
+
+### Version
+
+`herdctrl --version` prints the version, `herdctrl --help` the usage (`herdctrl [--tray | --version | --help]`).
+
 ### Build
 
 Install a stable Rust toolchain with [rustup](https://rustup.rs), then:
@@ -273,6 +306,8 @@ Apps that update themselves (the running binary shows as *(deleted)*) are still 
 |---|---|
 | *View name (hotkey)* | Launches that view. |
 | **Edit layouts…** | Opens the editor. |
+| **Update to X…** | Appears when a newer release exists; opens the updater in a terminal. |
+| **Check for updates daily** | Checkmark; turns the daily update check on or off. |
 | **Start at login** | Writes or removes `~/.config/autostart/herdctrl.desktop`. |
 | **Quit HerdCtrl** | Ends the tray and releases the hotkeys. |
 
@@ -294,7 +329,9 @@ The round icon in the header switches between **System**, **Dark** and **Light**
 | `$XDG_CONFIG_HOME/herdctrl/layouts.json` (default `~/.config/herdctrl/layouts.json`) | All views, zones and hotkeys |
 | `~/.config/herdctrl/ui.json` | Appearance |
 | `~/.config/autostart/herdctrl.desktop` | Exists while **Start at login** is on |
-| `$XDG_RUNTIME_DIR/herdctrl-{tray,editor}-<hash>.lock` | Single-instance locks for editor and tray, one pair per layouts file |
+| `~/.config/herdctrl/update.json` | Update check state: last check, latest version, announced version, check on/off |
+| `~/.local/share/herdctrl/installed-version` | Stamp with the version the installer put in place |
+| `$XDG_RUNTIME_DIR/herdctrl-{tray,editor}-<hash>.lock` | Single-instance locks for editor and tray, one pair per layouts file; `<hash>` is an FNV hash of the layouts path |
 
 ### layouts.json
 
