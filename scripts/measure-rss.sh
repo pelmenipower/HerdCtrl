@@ -68,7 +68,7 @@ results_file="$config_dir/results"
 total=$((runs + 1))
 for ((run = 1; run <= total; run++)); do
     started=$(date +%s%N)
-    XDG_CONFIG_HOME="$config_dir" "$binary" >/dev/null 2>&1 &
+    XDG_CONFIG_HOME="$config_dir" HERDCTRL_NO_UPDATE_CHECK=1 "$binary" >/dev/null 2>&1 &
     pid=$!
     visible="n/a"
     if wait_for_window "$pid"; then

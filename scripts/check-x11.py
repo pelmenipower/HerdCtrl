@@ -94,7 +94,7 @@ def main():
                        "command": "touch " + shlex.quote(str(marker)), "delay_ms": 0,
                        "bounds": {"x": 0, "y": 0, "width": 0.5, "height": 0.5}}],
         }]}))
-        env = dict(os.environ, XDG_CONFIG_HOME=directory)
+        env = dict(os.environ, XDG_CONFIG_HOME=directory, HERDCTRL_NO_UPDATE_CHECK="1")
         helper = app = None
         try:
             helper = subprocess.Popen(["xterm", "-T", "HerdCtrl acceptance focus", "-e", "sleep", "120"])
