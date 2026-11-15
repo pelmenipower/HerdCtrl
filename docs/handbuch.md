@@ -159,7 +159,7 @@ curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/upd
 ```
 
   `update.sh` führt das installierte `herdctrl-update` aus, sonst den geprüften Installer des neuesten Releases. Optionen des Installers (`--reinstall`, `--version`, `--extension` …) gelten auch für `herdctrl-update`.
-- `herdctrl-update --extension` installiert die GNOME-Shell-Erweiterung nachträglich, ohne Quellbaum. Das geht auch, wenn die aktuelle Version schon installiert ist.
+- `herdctrl-update --extension` installiert die GNOME-Shell-Erweiterung nachträglich, ohne Quellbaum. Das geht auch, wenn die aktuelle Version schon installiert ist. Nach dem Update einer bereits geladenen Erweiterung ab- und wieder anmelden.
 - `--reinstall` wiederholt die Installation der aktuellen Version.
 - Ein Update biegt außerdem einen vorhandenen Autostart-Eintrag (**Start at login**) auf `~/.local/bin/herdctrl` um, auch wenn er einen selbst gebauten Stand startete.
 - Im **Tray** erscheint bei einem neuen Release eine Benachrichtigung („HerdCtrl X is available“) und der Menüeintrag **Update to X…**. Er öffnet den Updater in einem Terminal.

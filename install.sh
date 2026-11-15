@@ -588,7 +588,11 @@ do_install() {
             elif ((!opt_no_extension)) && gnome_wayland && [[ ! -d $DATA/gnome-shell/extensions/$EXT_UUID ]]; then
                 say 'The GNOME extension is missing. Run: herdctrl-update --extension'
             fi
-            say "HerdCtrl $installed is already installed. Nothing to do."
+            if ((opt_extension)); then
+                say "HerdCtrl $installed is already installed."
+            else
+                say "HerdCtrl $installed is already installed. Nothing to do."
+            fi
             return 0
         fi
     else

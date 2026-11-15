@@ -687,6 +687,7 @@ class TestExtension(InstallerCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("gnome-extensions install --force", self.read_log("gext.log"))
         self.assertIn("Log out and back in to load the new extension.", r.stdout)
+        self.assertNotIn("Nothing to do", r.stdout)
         self.assertIsNone(tray.poll(), "the tray must not be stopped")
         self.assertEqual(self.read_log("setsid.log"), "")
         self.assertFalse((self.bin / "herdctrl").exists())
