@@ -142,7 +142,7 @@ fn session(
     }
     let raw = serde_json::to_string(&labels(monitors)).map_err(|error| error.to_string())?;
     let mut helper = Helper(
-        Command::new(binary)
+        crate::os::child_env::clean(&mut Command::new(binary))
             .args(["--identify-monitors", &raw])
             .env_remove("DESKTOP_STARTUP_ID")
             .env_remove("XDG_ACTIVATION_TOKEN")
@@ -276,6 +276,8 @@ pub fn run_helper(raw: &str) -> Result<(), Box<dyn std::error::Error>> {
     });
     let options = eframe::NativeOptions {
         viewport: builder(&labels[0]),
+        // Short-lived transparent label windows keep the proven OpenGL path.
+        renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
     eframe::run_native(
@@ -283,6 +285,7 @@ pub fn run_helper(raw: &str) -> Result<(), Box<dyn std::error::Error>> {
         options,
         Box::new(move |cc| {
             cc.egui_ctx.set_embed_viewports(false);
+            super::theme::install_fonts(&cc.egui_ctx);
             Ok(Box::new(LabelsApp {
                 labels,
                 state: Arc::new(Mutex::new(State {

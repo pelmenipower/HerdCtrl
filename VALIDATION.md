@@ -157,6 +157,8 @@ On Ubuntu X11 with `wmctrl`, `xrandr`, and two connected displays:
 
 ## RSS investigation — 2026-11-07
 
+> Superseded on 2026-11-10: the Vulkan renderer below meets the 30 MB target on this machine. The analysis here is the basis for it.
+
 **Result:** PRD 6 (active RSS < 30 MB) is **not met**. The unchanged build measures a median of 80,356 KiB (about 78.5 MiB) across nine starts. No code reduction was kept, because every candidate was either a no-op or gained less than the 1 MB threshold. PRD.md was not changed.
 
 **Method.** `target/release/herdctrl` was built with `cargo build --release --locked` (4,868,312 bytes). `scripts/measure-rss.sh [runs] [binary]` starts the binary with a throwaway `XDG_CONFIG_HOME`, runs one excluded warm-up, and then samples `VmRSS`, `RssAnon`, `RssFile` and `RssShmem` from `/proc/<pid>/status` one second after an X11 window named `HerdCtrl` appears (`xwininfo -root -tree`, polling up to 5 s). Only the PID it started is signalled. The breakdown came from `/proc/<pid>/smaps` grouped by mapping, with one instance running. Environment: GNOME 50 Wayland session, app via XWayland, Intel Meteor Lake GPU (i915 kernel driver, Mesa 26.0.8 `iris` Gallium driver), 15 GB RAM, no Xvfb.
@@ -281,6 +283,8 @@ A first fix retried the icon every 5 s. It worked: after unlocking, the icon app
 
 ## Measurements after the redesign — 2026-11-09
 
+> Editor RAM superseded on 2026-11-10, see *Vulkan renderer*.
+
 `scripts/measure-rss.sh` now waits for a HerdCtrl window owned by the started PID (`_NET_WM_PID`), so an open editor no longer makes it sample early. It also reports the time from start until that window is mapped (polling about every 10 ms plus the `xwininfo` call). Five measured starts after one excluded warm-up, release build 7,796,552 bytes, GNOME 50 Wayland, first-start screen with a throwaway configuration:
 
 | Run | VmRSS KiB | RssAnon KiB | Visible after |
@@ -311,3 +315,29 @@ New: `docs/manual.md` (English) and `docs/handbuch.md` (German) with the same co
 The seven gallery images in `docs/images` come from the opt-in test `render_docs_screenshots` (egui_kittest, wgpu, fixed sample data). Each image was reviewed. The sample dashboard now fixes the autostart state, because it previously showed this machine's real autostart entry. UI labels quoted in the manuals were checked against the code; one wrong label ("Extension not connected", really **Displays unavailable**) was corrected before committing. Palette contrast was computed: text 13:1 to 17.6:1, muted 5.7:1 to 7.3:1, `accent_on` on `accent` 7.0:1 dark and 4.9:1 light. All relative links and anchors in the docs resolve. Checks: fmt, clippy with warnings denied, 70 tests passed (nine opt-in tests ignored), release build.
 
 Not covered by images: tray menu, notifications and monitor identification labels, which are drawn outside the editor.
+
+## Vulkan renderer — 2026-11-10
+
+**Result:** editor VmRSS dropped from about 77–85 MB (OpenGL) to **28.8 or 30.5 MB** (Vulkan). PRD 6 (< 30 MB) is therefore **met in some starts only**. Binary 9,219,304 bytes (< 15 MB). Visible after 30 ms (< 100 ms).
+
+**Change.** eframe also builds its `wgpu` renderer. The editor uses wgpu with the Vulkan backend only. Before any thread starts, `renderer::prepare` sets `VK_LOADER_DRIVERS_SELECT` to the drivers of the primary GPU's vendor, read from `/sys/class/drm/*/device/{vendor,boot_vga}`, so the Vulkan loader opens no LLVM-linked driver (lavapipe, RADV) and no unused vendor's driver. Without a known vendor it only disables `*lvp*,*radeon*`. A driver choice the user set (`VK_LOADER_DRIVERS_SELECT`, `…_DISABLE`, `VK_ICD_FILENAMES`, `VK_DRIVER_FILES`, `VK_ADD_DRIVER_FILES`) is left alone. If eframe reports a wgpu error, the editor re-executes `/proc/self/exe` with `HERDCTRL_RENDERER=glow`. The variables it sets for itself are removed from every child process (apps, `sh -c` commands, tray, identification helper; `os::child_env`), so launched programs see all drivers. egui's bundled fonts are dropped; ⬚ and ⟳ became ▢ and ↻ (present in Inter), and the search magnifier is painted. The monitor identification helper stays on OpenGL and now loads Inter too.
+
+**Method.** `scripts/measure-rss.sh 5` (throwaway `XDG_CONFIG_HOME`, one warm-up, sample one second after the editor's own window is visible), same machine as the RSS investigation: Intel Meteor Lake, Mesa 26.0.8, Vulkan loader 1.4.341, GNOME 50 Wayland, editor via XWayland. System load was below 2.1 for the final series. An earlier series at load 12 (other users' `node` processes) is discarded for timings.
+
+| Series (5 starts each, median) | VmRSS KiB | RssAnon | RssFile | Visible ms |
+|---|---|---|---|---|
+| Vulkan 1 | 28,776 | 9,240 | 19,504 | 31 |
+| Vulkan 2 | 30,496 | 11,048 | 19,456 | 30 |
+| Vulkan 3 | 30,476 | 11,068 | 19,452 | 30 |
+| OpenGL (`HERDCTRL_RENDERER=glow`) | 85,400 | 16,508 | 68,876 | 64 |
+| Fallback (`VK_LOADER_DRIVERS_SELECT='*does-not-exist*'`) | 85,472 | 16,484 | 68,988 | 81 |
+
+Single starts are bimodal: about 28.7 MB or about 30.6 MB, with nothing in between (for example 9 of 12 starts high in one probe, 2 of 8 in another).
+
+**The 1.8 MB difference.** It is live heap memory, fixed within 0.3 s of the start and stable afterwards. A temporary, uncommitted `mtrace` build (glibc `libc_malloc_debug`) compared the live allocations of 8 starts: the only call site that differs is `libvulkan_intel.so+0x5effa`, which holds 80 blocks of 58,824 bytes in low starts and 112 in high ones (4.6 vs 6.4 MB). Under `strace` the high case never occurs, so it depends on start-up timing. Ruled out: Mesa shader cache (`MESA_SHADER_CACHE_DISABLE=true`), glibc arenas (`MALLOC_ARENA_MAX=1`/`2`), the X11 scale factor (`WINIT_X11_SCALE_FACTOR=1`), wgpu's `desired_maximum_frame_latency = 1`, and a `malloc_trim(0)` after start-up (the memory is in use, not free). None of these was kept.
+
+**Other numbers.** Dropping egui's fonts saved about 0.4 MB RSS and 1.4 MB of binary. The OpenGL path is 8 MB larger than before the change (85 vs 77 MB) because the binary now contains wgpu; it only applies to systems without a usable Vulkan device. The fallback path costs one failed Vulkan enumeration and one extra exec, and was visible after 81 ms here.
+
+**Checks.** Pixels of the real Vulkan window and of the forced fallback window were read back over X11 and are correct. The tray started by the editor carries no `VK_*` or `HERDCTRL_*` variables. Only `libvulkan_intel.so` is mapped. `cargo fmt --check`, clippy with warnings denied, `cargo test --locked` (76 passed, 9 opt-in ignored) and the release build passed. The UI snapshots and the gallery were regenerated and reviewed without egui's fonts. An Opus review found 3 important and 7 minor points: fixed were the inherited environment, the discrete GPU on hybrid systems, fallback only on wgpu errors, `/proc/self/exe`, the additional loader variables, and this record. Documented without code: runtime GPU errors (device lost) panic without fallback; use `HERDCTRL_RENDERER=glow`.
+
+**Not verified.** AMD (RADV links LLVM, so little gain is expected), NVIDIA's proprietary driver, hybrid laptops, virtual machines, and the monitor identification labels with Inter on a real desktop. CI runs under Xvfb without Vulkan and therefore only exercises the OpenGL fallback.

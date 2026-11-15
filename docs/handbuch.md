@@ -35,7 +35,17 @@ Die Oberfläche ist englisch. Bedienelemente stehen hier mit ihrem Namen in der 
 
 Andere Wayland-Compositoren erkennt HerdCtrl und meldet sie als **Wayland · unsupported**. Wayland-Fenster steuert HerdCtrl nie über `wmctrl`.
 
-Der Editor selbst zeichnet über X11 bzw. XWayland mit den OpenGL-Bibliotheken des Systems. Unter GNOME schränkt das nicht ein, welche Fenster er steuern kann: native Wayland- und XWayland-Fenster gehen beide.
+Der Editor selbst läuft über X11 bzw. XWayland. Unter GNOME schränkt das nicht ein, welche Fenster er steuern kann: native Wayland- und XWayland-Fenster gehen beide.
+
+### Renderer
+
+Der Editor zeichnet mit **Vulkan** (wgpu) und lässt den Vulkan-Loader nur den Treiber der **primären GPU** öffnen (die, auf der die Firmware gestartet hat, laut `/sys/class/drm`). So wird LLVM nicht geladen, das der OpenGL-Treiber von Mesa und der Software-Treiber lavapipe brauchen, und der Editor bleibt bei 29 bis 31 statt etwa 85 MB. Auf Laptops mit zusätzlicher dedizierter GPU bleibt diese im Ruhezustand.
+
+- Funktioniert kein Vulkan-Gerät, startet sich der Editor selbst mit **OpenGL** neu und meldet *Vulkan renderer unavailable (…); using OpenGL*. Das passiert in virtuellen Maschinen und auf alten GPUs und kostet einen zusätzlichen Start.
+- OpenGL erzwingst du mit `HERDCTRL_RENDERER=glow`. Das hilft auch, wenn das Fenster Darstellungsfehler zeigt oder der Editor nach einem GPU-Reset abstürzt.
+- Eine eigene Treiberwahl bleibt unangetastet: `VK_LOADER_DRIVERS_SELECT`, `VK_LOADER_DRIVERS_DISABLE`, `VK_ICD_FILENAMES`, `VK_DRIVER_FILES` oder `VK_ADD_DRIVER_FILES`. Mit `VK_LOADER_DRIVERS_SELECT` lässt du den Editor auf einer anderen GPU zeichnen.
+- Die Variablen, die HerdCtrl für sein eigenes Fenster setzt, entfernt es für jedes Programm, das es startet. Deine Anwendungen sehen also wie gewohnt alle Treiber.
+- Die Monitornummern bei **Identify monitors** nutzen immer OpenGL, sie sind nur wenige Sekunden offen.
 
 ### Bauen
 
@@ -44,7 +54,7 @@ Installiere eine stabile Rust-Toolchain mit [rustup](https://rustup.rs), dann:
 ```sh
 sudo apt-get install build-essential pkg-config libx11-dev libxi-dev libxcursor-dev \
   libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-xkb1 libgl1-mesa-dev \
-  wmctrl x11-xserver-utils
+  libvulkan1 mesa-vulkan-drivers wmctrl x11-xserver-utils
 cargo build --release --locked
 ./target/release/herdctrl
 ```
@@ -317,7 +327,7 @@ Unbekannte Felder werden abgelehnt. Gespeichert wird über eine private Zwischen
 
 ## Grenzen
 
-- **Speicher:** Der Editor braucht etwa 76 MB, vor allem für den Mesa/LLVM-OpenGL-Treiber; das PRD-Ziel sind 30 MB. Der Tray, der dauerhaft läuft, braucht etwa 2 MB eigenen Speicher. Details in [VALIDATION.md](../VALIDATION.md).
+- **Speicher:** Der Editor braucht mit dem Vulkan-Renderer 29 bis 31 MB (gemessen mit Intel-GPU; das PRD-Ziel von 30 MB wird nur bei einem Teil der Starts erreicht), nach einem Rückfall auf OpenGL etwa 85 MB. Der proprietäre NVIDIA-Treiber ist nicht gemessen. Auf AMD-GPUs hängt schon der Vulkan-Treiber an LLVM, dort braucht der Editor mehr. Der Tray, der dauerhaft läuft, braucht etwa 2 MB eigenen Speicher. Details in [VALIDATION.md](../VALIDATION.md).
 - Wrapper-Skripte, Sandbox-Anwendungen und Terminal-Server, die alle Fenster in einem Prozess führen (GNOME Console, GNOME Terminal), lassen sich nicht immer sicher erkennen. HerdCtrl rät nicht: Es startet ein neues Fenster, ordnet nach Startreihenfolge zu oder meldet einen Timeout.
 - Eine Anwendungszone und ein eigener Befehl für **dasselbe Programm** in einer View werden nicht unterstützt, weil sich ihre Fenster nicht sicher unterscheiden lassen.
 - Fenstermanager und Programme können Mindestgrößen erzwingen oder Rahmen hinzufügen. Pixelgenaue Außenmaße hängen deshalb vom Desktop ab.
@@ -334,6 +344,7 @@ Unbekannte Felder werden abgelehnt. Gespeichert wird über eine private Zwischen
 | Tray-Symbol fehlt | AppIndicator-Erweiterung aktivieren. Hotkeys funktionieren auch ohne Symbol. |
 | Hotkey tut nichts | Tray-Anzeige im Kopf prüfen, nach der Aufnahme speichern und auf eine Konflikt-Benachrichtigung achten. Eventuell belegt der Desktop die Kombination. |
 | Eine Zone meldet immer *No new … window appeared* | Die Anwendung holt nur ihr vorhandenes Fenster nach vorn. Ein Fenster je Anwendung verwenden oder einen eigenen Befehl mit Neues-Fenster-Option. |
+| Editorfenster bleibt leer, zeigt Darstellungsfehler oder stürzt ab | Mit `HERDCTRL_RENDERER=glow` starten, um OpenGL zu nutzen, und GPU und Treiber melden. |
 | Zonen überdecken die obere Leiste | Erweiterung aktualisieren und ab- und wieder anmelden, damit sie den Arbeitsbereich meldet. |
 
 ## Entwicklung
@@ -400,7 +411,7 @@ cargo build --release --locked
 scripts/measure-rss.sh 5
 ```
 
-Das Skript startet den Editor mit einer Wegwerf-Konfiguration, wartet auf das Fenster, das zu seiner eigenen PID gehört, und meldet die Zeit bis zum sichtbaren Fenster, VmRSS und RssAnon.
+Das Skript startet den Editor mit einer Wegwerf-Konfiguration, wartet auf das Fenster, das zu seiner eigenen PID gehört, und meldet die Zeit bis zum sichtbaren Fenster, VmRSS und RssAnon. `HERDCTRL_RENDERER=glow scripts/measure-rss.sh 5` misst zum Vergleich den OpenGL-Rückfall.
 
 ### Icon
 

@@ -98,7 +98,16 @@ pub fn strong_family() -> FontFamily {
 
 /// Embeds the fonts and installs both themes' visuals and the shared spacing.
 pub fn install(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
+    install_fonts(ctx);
+    ctx.set_visuals_of(Theme::Dark, visuals(&dark(), true));
+    ctx.set_visuals_of(Theme::Light, visuals(&light(), false));
+    install_spacing(ctx);
+}
+
+/// Inter and JetBrains Mono are the only fonts: egui's bundled ones (about 1 MB resident)
+/// are left out, so every symbol in the UI must exist in these two or be painted.
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = FontDefinitions::empty();
     for (name, bytes) in [
         (
             "inter",
@@ -117,20 +126,23 @@ pub fn install(ctx: &egui::Context) {
             .font_data
             .insert(name.into(), Arc::new(FontData::from_static(bytes)));
     }
-    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
-    proportional.insert(0, "inter".into());
-    // egui's bundled fonts stay as fallbacks for symbols such as ▶.
-    let mut strong = vec!["inter-semibold".to_string()];
-    strong.extend(proportional.iter().cloned());
-    fonts.families.insert(strong_family(), strong);
-    fonts
-        .families
-        .entry(FontFamily::Monospace)
-        .or_default()
-        .insert(0, "mono".into());
+    // Each family falls back to the other fonts for glyphs it lacks.
+    for (family, order) in [
+        (
+            FontFamily::Proportional,
+            ["inter", "mono", "inter-semibold"],
+        ),
+        (strong_family(), ["inter-semibold", "inter", "mono"]),
+        (FontFamily::Monospace, ["mono", "inter", "inter-semibold"]),
+    ] {
+        fonts
+            .families
+            .insert(family, order.iter().map(|name| name.to_string()).collect());
+    }
     ctx.set_fonts(fonts);
-    ctx.set_visuals_of(Theme::Dark, visuals(&dark(), true));
-    ctx.set_visuals_of(Theme::Light, visuals(&light(), false));
+}
+
+fn install_spacing(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = Vec2::new(8.0, 8.0);
         style.spacing.button_padding = Vec2::new(12.0, 6.0);
@@ -499,6 +511,17 @@ pub fn system_theme() -> Option<Theme> {
         // 0 means no preference; GNOME's default style is light.
         _ => Some(Theme::Light),
     }
+}
+
+/// A painted magnifier for search fields; the embedded fonts have no such glyph.
+pub fn search_icon(ui: &mut egui::Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
+    let stroke = Stroke::new(1.6_f32, color);
+    let center = rect.center() - Vec2::splat(1.5);
+    ui.painter().circle_stroke(center, 5.0, stroke);
+    let handle = Vec2::splat(5.0 / std::f32::consts::SQRT_2);
+    ui.painter()
+        .line_segment([center + handle, center + handle * 2.0], stroke);
 }
 
 #[cfg(test)]

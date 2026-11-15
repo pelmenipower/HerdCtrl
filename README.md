@@ -80,7 +80,7 @@ There are no release packages yet. Build with a stable Rust toolchain ([rustup](
 ```sh
 sudo apt-get install build-essential pkg-config libx11-dev libxi-dev libxcursor-dev \
   libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-xkb1 libgl1-mesa-dev \
-  wmctrl x11-xserver-utils
+  libvulkan1 mesa-vulkan-drivers wmctrl x11-xserver-utils
 git clone https://github.com/pelmenipower/HerdCtrl.git
 cd HerdCtrl
 cargo build --release --locked
@@ -110,11 +110,11 @@ The tray keeps listening for the hotkey after you close the editor. Turn on **St
 
 | Target (PRD) | Measured | |
 |---|---|---|
-| Binary < 15 MB | 7.8 MB release binary | ✅ |
-| Warm start < 100 ms | 69 ms to a visible editor window (median of 5, GNOME 50) | ✅, measured to window visibility, not first frame |
-| RAM < 30 MB | Tray: 1.8 MB own memory (8.7 MB VmRSS). Editor: 75.7 MB VmRSS, mostly the Mesa/LLVM OpenGL driver | ❌ for the editor |
+| Binary < 15 MB | 9.2 MB release binary | ✅ |
+| Warm start < 100 ms | 30 ms to a visible editor window (median of 5, three series, GNOME 50) | ✅, measured to window visibility, not first frame |
+| RAM < 30 MB | Editor: 28.8 or 30.5 MB VmRSS with the Vulkan renderer on an Intel GPU, depending on the start (was 77 MB). Tray: 8.7 MB VmRSS | ⚠️ borderline: met in some starts only; AMD and NVIDIA not measured |
 
-How these numbers were taken, and what is still open, is in [VALIDATION.md](VALIDATION.md).
+The editor draws with Vulkan and loads only the driver of your GPU, which avoids the roughly 40 MB LLVM library that Mesa's OpenGL driver pulls in. The remaining 1.8 MB difference between starts is a command-buffer pool inside Intel's Vulkan driver whose size depends on start-up timing. Without a usable Vulkan device it falls back to OpenGL by itself (about 85 MB). On AMD GPUs the Vulkan driver links LLVM too, so the saving is smaller there. How these numbers were taken is in [VALIDATION.md](VALIDATION.md).
 
 ## Development
 
