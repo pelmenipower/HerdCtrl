@@ -4,6 +4,7 @@ use crate::{
     core::{
         config::Config,
         launcher::{self, Report},
+        update::{self, State},
     },
     os::{gnome, Backend},
 };
@@ -31,6 +32,148 @@ enum Message {
     Edit,
     Autostart(bool),
     Quit,
+    /// Result of the one-shot `fetch_latest` thread.
+    Checked(Result<update::Version, String>),
+    /// The "Check for updates daily" checkmark.
+    UpdateCheck(bool),
+    /// The "Update to X…" item.
+    Update,
+    /// The updater thread could not open a terminal.
+    UpdaterFailed(String),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum UpdateCheck {
+    On,
+    Off,
+    /// `HERDCTRL_NO_UPDATE_CHECK` is set or `update.json` is invalid.
+    Unavailable,
+}
+
+fn update_label(version: update::Version) -> String {
+    format!("Update to {version}…")
+}
+
+/// The version to announce: available and not announced yet.
+fn pending_notice(state: &State, available: Option<update::Version>) -> Option<update::Version> {
+    available.filter(|v| state.notified.as_deref() != Some(v.to_string().as_str()))
+}
+
+/// A check may start: allowed, idle, past the back-off, and forced or due.
+fn should_check(
+    state: &State,
+    running: bool,
+    now: Instant,
+    not_before: Instant,
+    force: bool,
+    unix_now: u64,
+) -> bool {
+    state.enabled && !running && now >= not_before && (force || update::due(state, unix_now))
+}
+
+/// Update bookkeeping owned by the run loop: the only writer of `update.json`.
+struct Updates {
+    path: Option<PathBuf>,
+    /// `None` while checks are unavailable.
+    state: Option<State>,
+    running: bool,
+    force: bool,
+    not_before: Instant,
+}
+
+impl Updates {
+    fn new(notifier: &Notifier) -> Self {
+        let mut updates = Self {
+            path: None,
+            state: None,
+            running: false,
+            force: false,
+            not_before: Instant::now() + Duration::from_secs(60),
+        };
+        // No file access at all when disabled by the environment.
+        if update::disabled_by_env() {
+            return updates;
+        }
+        match State::path().and_then(|path| State::load(&path).map(|state| (path, state))) {
+            Ok((path, state)) => {
+                updates.path = Some(path);
+                updates.state = Some(state);
+            }
+            Err(e) => notifier.show("Update check unavailable", &e),
+        }
+        updates
+    }
+
+    fn check(&self) -> UpdateCheck {
+        match &self.state {
+            None => UpdateCheck::Unavailable,
+            Some(state) if state.enabled => UpdateCheck::On,
+            Some(_) => UpdateCheck::Off,
+        }
+    }
+
+    fn available(&self) -> Option<update::Version> {
+        update::available(self.state.as_ref()?)
+    }
+
+    fn save(&self, notifier: &Notifier) {
+        if let (Some(path), Some(state)) = (&self.path, &self.state) {
+            if let Err(e) = state.store(path) {
+                notifier.show("Update check setting not saved", &e);
+            }
+        }
+    }
+
+    /// Announces a version once, then remembers it.
+    fn notify(&mut self, notifier: &Notifier) {
+        let Some(state) = &self.state else { return };
+        let Some(version) = pending_notice(state, self.available()) else {
+            return;
+        };
+        notifier.show(
+            &format!("HerdCtrl {version} is available"),
+            "Update from the tray menu, or run herdctrl-update in a terminal.",
+        );
+        if let Some(state) = &mut self.state {
+            state.notified = Some(version.to_string());
+        }
+        self.save(notifier);
+    }
+
+    fn start_check(&mut self, tx: &Sender<Message>) {
+        self.running = true;
+        self.force = false;
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let _ = tx.send(Message::Checked(update::fetch_latest()));
+        });
+    }
+
+    fn finish_check(&mut self, result: Result<update::Version, String>) {
+        self.running = false;
+        match result {
+            Ok(version) => {
+                if let Some(state) = &mut self.state {
+                    state.checked_at = update::now();
+                    state.latest = Some(version.to_string());
+                }
+            }
+            Err(e) => {
+                eprintln!("Update check failed: {e}");
+                self.not_before = Instant::now() + Duration::from_secs(3600);
+            }
+        }
+    }
+
+    fn set_enabled(&mut self, enabled: bool, notifier: &Notifier) {
+        let Some(state) = &mut self.state else { return };
+        state.enabled = enabled;
+        if enabled {
+            self.force = true;
+            self.not_before = Instant::now();
+        }
+        self.save(notifier);
+    }
 }
 
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -141,12 +284,16 @@ pub fn run() -> Result<(), String> {
     let (launches, launch_rx) = mpsc::channel();
     let mut hotkeys = Hotkeys::new(Backend::detect(), events.clone());
     let notifier = Notifier::default();
+    let mut updates = Updates::new(&notifier);
+    updates.notify(&notifier);
     // The loop keeps its own sender, so hotkeys keep running even if the icon fails.
     let handle = Tray {
         views: Vec::new(),
         autostart: autostart_enabled(),
         tx: tx.clone(),
         icon: icon(),
+        update: updates.available(),
+        update_check: updates.check(),
     }
     // Without a tray host (screen locked, AppIndicator extension off) wait for one to
     // appear instead of failing; ksni registers the icon when the watcher comes online.
@@ -170,6 +317,18 @@ pub fn run() -> Result<(), String> {
                 autostart = enabled;
                 if let Some(handle) = &handle {
                     handle.update(|tray| tray.autostart = enabled);
+                }
+            }
+            if let Some(state) = &updates.state {
+                if should_check(
+                    state,
+                    updates.running,
+                    Instant::now(),
+                    updates.not_before,
+                    updates.force,
+                    update::now(),
+                ) {
+                    updates.start_check(&tx);
                 }
             }
             let current = modified(&path);
@@ -208,6 +367,26 @@ pub fn run() -> Result<(), String> {
                     handle.update(|tray| tray.autostart = autostart);
                 }
             }
+            Ok(Message::Checked(result)) => {
+                updates.finish_check(result);
+                updates.save(&notifier);
+                updates.notify(&notifier);
+                refresh_update(&handle, &updates);
+            }
+            Ok(Message::UpdateCheck(enabled)) => {
+                updates.set_enabled(enabled, &notifier);
+                refresh_update(&handle, &updates);
+            }
+            Ok(Message::Update) => {
+                let tx = tx.clone();
+                // Application discovery and terminal detection block.
+                thread::spawn(move || {
+                    if let Err(e) = update::launch_updater() {
+                        let _ = tx.send(Message::UpdaterFailed(e));
+                    }
+                });
+            }
+            Ok(Message::UpdaterFailed(e)) => notifier.show("Updater could not start", &e),
             Ok(Message::Quit) => break,
             Err(RecvTimeoutError::Disconnected) => unreachable!("the run loop holds a sender"),
             Err(RecvTimeoutError::Timeout) => {}
@@ -226,6 +405,16 @@ pub fn run() -> Result<(), String> {
         handle.shutdown().wait();
     }
     Ok(())
+}
+
+fn refresh_update(handle: &Option<ksni::blocking::Handle<Tray>>, updates: &Updates) {
+    let (update, check) = (updates.available(), updates.check());
+    if let Some(handle) = handle {
+        handle.update(|tray| {
+            tray.update = update;
+            tray.update_check = check;
+        });
+    }
 }
 
 fn launch(config: &Config, index: usize, events: &Sender<Report>) {
@@ -386,6 +575,8 @@ struct Tray {
     autostart: bool,
     tx: Sender<Message>,
     icon: Vec<Icon>,
+    update: Option<update::Version>,
+    update_check: UpdateCheck,
 }
 
 impl Tray {
@@ -435,8 +626,18 @@ impl ksni::Tray for Tray {
                 .into(),
             );
         }
+        items.push(MenuItem::Separator);
+        if let Some(version) = self.update {
+            items.push(
+                StandardItem {
+                    label: update_label(version),
+                    activate: Box::new(|tray: &mut Self| tray.send(Message::Update)),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
         items.extend([
-            MenuItem::Separator,
             StandardItem {
                 label: "Edit layouts…".into(),
                 activate: Box::new(|tray: &mut Self| tray.send(Message::Edit)),
@@ -448,6 +649,16 @@ impl ksni::Tray for Tray {
                 checked: self.autostart,
                 activate: Box::new(|tray: &mut Self| {
                     tray.send(Message::Autostart(!tray.autostart))
+                }),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "Check for updates daily".into(),
+                checked: self.update_check == UpdateCheck::On,
+                enabled: self.update_check != UpdateCheck::Unavailable,
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send(Message::UpdateCheck(tray.update_check != UpdateCheck::On))
                 }),
                 ..Default::default()
             }
@@ -594,6 +805,77 @@ mod tests {
     fn quotes_autostart_exec() {
         let entry = autostart_entry("/home/a b/$x/herd\"ctrl");
         assert!(entry.contains("Exec=\"/home/a b/\\$x/herd\\\"ctrl\" --tray\n"));
+    }
+
+    fn menu_labels(update: Option<update::Version>, check: UpdateCheck) -> Vec<(String, bool)> {
+        use ksni::Tray as _;
+        let (tx, _rx) = mpsc::channel();
+        let tray = Tray {
+            views: Vec::new(),
+            autostart: false,
+            tx,
+            icon: Vec::new(),
+            update,
+            update_check: check,
+        };
+        tray.menu()
+            .into_iter()
+            .filter_map(|item| match item {
+                MenuItem::Standard(i) => Some((i.label, i.enabled)),
+                MenuItem::Checkmark(i) => Some((i.label, i.enabled)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn menu_with_update_and_check() {
+        let labels = menu_labels(Some(update::Version(0, 2, 0)), UpdateCheck::On);
+        let names: Vec<_> = labels.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "No views yet",
+                "Update to 0.2.0…",
+                "Edit layouts…",
+                "Start at login",
+                "Check for updates daily",
+                "Quit HerdCtrl"
+            ]
+        );
+        assert!(labels[4].1);
+    }
+
+    #[test]
+    fn menu_unavailable_greys_checkmark() {
+        let labels = menu_labels(None, UpdateCheck::Unavailable);
+        assert_eq!(labels.len(), 5);
+        assert_eq!(labels[3], ("Check for updates daily".to_string(), false));
+    }
+
+    #[test]
+    fn notice_once_per_version() {
+        let v = update::Version(0, 2, 0);
+        let mut state = State::default();
+        assert_eq!(pending_notice(&state, Some(v)), Some(v));
+        state.notified = Some("0.2.0".into());
+        assert_eq!(pending_notice(&state, Some(v)), None);
+        assert_eq!(pending_notice(&state, None), None);
+    }
+
+    #[test]
+    fn check_planning() {
+        let now = Instant::now();
+        let mut state = State::default();
+        assert!(should_check(&state, false, now, now, false, 1_000_000));
+        assert!(!should_check(&state, true, now, now, false, 1_000_000));
+        let later = now + Duration::from_secs(5);
+        assert!(!should_check(&state, false, now, later, true, 1_000_000));
+        state.checked_at = 1_000_000;
+        assert!(!should_check(&state, false, now, now, false, 1_000_100));
+        assert!(should_check(&state, false, now, now, true, 1_000_100));
+        state.enabled = false;
+        assert!(!should_check(&state, false, now, now, true, 9_000_000));
     }
 
     #[test]
