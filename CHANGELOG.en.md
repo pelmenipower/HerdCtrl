@@ -2,7 +2,9 @@
 
 All notable changes to HerdCtrl. Deutsche Fassung: [CHANGELOG.md](CHANGELOG.md). Versions follow [Semantic Versioning](https://semver.org/). Only the maintainer sets versions and publishes releases; until then, new entries go under **Unreleased**.
 
-## [Unreleased] – 0.1.0
+## [Unreleased]
+
+## [0.1.0] – 2026-11-15
 
 First version, developed on `feature/initial-app` from 2026-10-31 to 2026-11-10.
 
@@ -39,6 +41,7 @@ First version, developed on `feature/initial-app` from 2026-10-31 to 2026-11-10.
 
 ### Documentation and checks
 
+- New: MIT License.
 - New: release workflow for `v*` tags. It builds the Linux files, signs `SHA256SUMS` keylessly with Sigstore, adds a GitHub build attestation and only creates a draft for the maintainer to publish. Both manuals describe how to verify a download.
 - Docs: README modelled on Shellherd with a gallery, a complete user guide in English and German, the design system, instructions for the screenshots, `CLAUDE.md`, and the `run-app` and `feature-pipeline` skills.
 - Tests: interaction tests with `egui_kittest` that need no GPU. Also opt-in screenshots, an X11 integration under Xvfb and Openbox in CI (now measured with `xwininfo`), a Rust↔GJS protocol test and live GNOME tests.

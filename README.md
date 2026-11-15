@@ -75,7 +75,7 @@ These images are rendered from the real editor code with fixed sample data, not 
 
 ## Install from source
 
-There are no release packages yet. Future releases are signed with Sigstore; the [user guide](docs/manual.md#verify-a-download) explains how to verify them. Until then, build with a stable Rust toolchain ([rustup](https://rustup.rs)):
+Signed x86_64 builds for Ubuntu 24.04 or newer are on the [Releases page](https://github.com/pelmenipower/HerdCtrl/releases); the [user guide](docs/manual.md#verify-a-download) explains how to verify them. To build it yourself, use a stable Rust toolchain ([rustup](https://rustup.rs)):
 
 ```sh
 sudo apt-get install build-essential pkg-config libx11-dev libxi-dev libxcursor-dev \
@@ -127,4 +127,6 @@ cargo build --release --locked
 
 Contributors and coding agents follow [AGENTS.md](AGENTS.md) (rules) and [PRD.md](PRD.md) (product spec). The [user guide](docs/manual.md#development) explains the integration tests on X11 and GNOME, the UI snapshots and the memory measurement. Pull requests go to `staging`; `main` only receives merges from `staging`.
 
-The interface uses Inter and JetBrains Mono under the SIL Open Font License 1.1 (license texts in `assets/fonts`).
+## License
+
+HerdCtrl is released under the [MIT License](LICENSE). The interface uses Inter and JetBrains Mono under the SIL Open Font License 1.1 (license texts in `assets/fonts`).
