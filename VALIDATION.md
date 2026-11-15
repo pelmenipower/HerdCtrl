@@ -311,3 +311,12 @@ New: `docs/manual.md` (English) and `docs/handbuch.md` (German) with the same co
 The seven gallery images in `docs/images` come from the opt-in test `render_docs_screenshots` (egui_kittest, wgpu, fixed sample data). Each image was reviewed. The sample dashboard now fixes the autostart state, because it previously showed this machine's real autostart entry. UI labels quoted in the manuals were checked against the code; one wrong label ("Extension not connected", really **Displays unavailable**) was corrected before committing. Palette contrast was computed: text 13:1 to 17.6:1, muted 5.7:1 to 7.3:1, `accent_on` on `accent` 7.0:1 dark and 4.9:1 light. All relative links and anchors in the docs resolve. Checks: fmt, clippy with warnings denied, 70 tests passed (nine opt-in tests ignored), release build.
 
 Not covered by images: tray menu, notifications and monitor identification labels, which are drawn outside the editor.
+
+## Signed release workflow — 2026-11-15
+
+Method: dry run of `.github/workflows/release.yml` on PR #4 (run 43707190870, `ubuntu-24.04`, pull_request event).
+
+- Packaged `herdctrl-4-merge-linux-x86_64.tar.gz` and the extension ZIP, wrote `SHA256SUMS`.
+- `cosign sign-blob` keyless with the workflow's GitHub OIDC identity: Rekor transparency log entry 3900819173.
+- `cosign verify-blob` against the exact workflow identity (`…/release.yml@refs/pull/4/merge`) and issuer `https://token.actions.githubusercontent.com`: `Verified OK`; `sha256sum --check`: both files OK.
+- Not exercised yet: the tag path (version check, build attestation, draft release). Attestations need the repository to be public; it runs on the first `v*` tag the maintainer pushes.
