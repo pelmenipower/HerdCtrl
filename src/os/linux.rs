@@ -42,6 +42,7 @@ pub fn parse_monitors(raw: &str) -> Result<Vec<Monitor>, String> {
                         x,
                         y,
                         scale: 1.0,
+                        work_area: None,
                     });
                     active = Some(monitors.len() - 1);
                     break;
@@ -80,7 +81,7 @@ fn geometry(value: &str) -> Option<(u32, u32, i32, i32)> {
     ))
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, serde::Deserialize)]
 pub struct Window {
     pub id: String,
     pub pid: u32,
@@ -102,6 +103,36 @@ pub fn windows() -> Result<Vec<Window>, String> {
     Ok(parse_windows(&output("wmctrl", &["-lp"])?))
 }
 
+fn parent_in_stat(stat: &str) -> Option<u32> {
+    stat.rsplit_once(") ")?
+        .1
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
+pub fn parent(pid: u32) -> Option<u32> {
+    parent_in_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+pub fn has_ancestor(pid: u32, ancestors: &HashSet<u32>) -> bool {
+    let mut current = pid;
+    for _ in 0..64 {
+        if ancestors.contains(&current) {
+            return true;
+        }
+        if current <= 1 {
+            return false;
+        }
+        match parent(current) {
+            Some(next) => current = next,
+            None => return false,
+        }
+    }
+    false
+}
+
 pub fn descendants(root: u32, known: &mut HashSet<u32>) {
     known.insert(root);
     // Retain observed descendants even after the launcher shell exits.
@@ -111,9 +142,7 @@ pub fn descendants(root: u32, known: &mut HashSet<u32>) {
             .filter_map(|entry| {
                 let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
                 let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
-                let after_name = stat.rsplit_once(") ")?.1;
-                let parent: u32 = after_name.split_whitespace().nth(1)?.parse().ok()?;
-                Some((pid, parent))
+                Some((pid, parent_in_stat(&stat)?))
             })
             .collect();
         loop {
@@ -158,6 +187,15 @@ mod tests {
         assert_eq!((result[0].x, result[1].y), (-2560, -200));
         assert_eq!(result[0].scale, 1.25);
         assert!(parse_monitors("DP-1 disconnected").is_err());
+    }
+    #[test]
+    fn process_ancestry_follows_parent_chain() {
+        let me = std::process::id();
+        let parent = parent(me).unwrap();
+        assert!(has_ancestor(me, &HashSet::from([parent])));
+        assert!(has_ancestor(me, &HashSet::from([me])));
+        assert!(!has_ancestor(me, &HashSet::from([u32::MAX])));
+        assert_eq!(parent_in_stat("1 (a b) S 42 1 1 0"), Some(42));
     }
     #[test]
     fn parses_window_pid_without_matching_titles() {
