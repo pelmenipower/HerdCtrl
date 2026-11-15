@@ -324,3 +324,16 @@ Method: dry run of `.github/workflows/release.yml` on PR #4 (run 43707190870, `u
 - `cosign sign-blob` keyless with the workflow's GitHub OIDC identity: Rekor transparency log entry 3900819173.
 - `cosign verify-blob` against the exact workflow identity (`…/release.yml@refs/pull/4/merge`) and issuer `https://token.actions.githubusercontent.com`: `Verified OK`; `sha256sum --check`: both files OK.
 - Not exercised yet: the tag path (version check, build attestation, draft release). Attestations need the repository to be public; it runs on the first `v*` tag the maintainer pushes.
+
+## Installation and updates — 2026-11-15
+
+Method and results, branch `feature/install-update`:
+
+- `cargo test --locked`: 98 passed, 9 ignored. `python3 -B scripts/installer.test.py`: 52 tests OK, offline (stubbed `curl`, `sudo`, `apt-get`, `dpkg-query`, `gnome-extensions`, `setsid`). `shellcheck` runs in CI only (not installed locally).
+- Release binary: 9,276,392 bytes (before: 9,219,304; +57 KB for the CLI, signals and the release check). Target < 15 MB met.
+- Tray, isolated `XDG_CONFIG_HOME`, `HERDCTRL_NO_UPDATE_CHECK=1`, 3 starts, `VmRSS` after 3 s: 8.39 / 8.30 / 8.32 MB (before: 8.7 MB).
+- `SIGTERM` to the tray: exit code 0 after 36–119 ms in all 3 runs (shutdown path with hotkey release instead of an immediate kill).
+- `herdctrl --version` prints `herdctrl 0.1.0`; an unknown option prints the usage and exits with 2 instead of opening the editor.
+- UI snapshots `update-dark.png` and `update-light.png` checked by eye; `edit-dark.png` unchanged.
+
+Not yet verified (manual acceptance): a fresh install in a clean Ubuntu 24.04 VM; the update from 0.1.0 to 0.2.0 on the real desktop (tray restart, hotkeys afterwards, autostart rewrite, extension); the update from 0.2.0 to 0.3.0 without the wait; notification, menu item and **Update now** from the tray and the editor against a real release. The installer only works for releases from 0.2.0 on, so these checks need the next release.
