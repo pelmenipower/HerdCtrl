@@ -1,122 +1,524 @@
-use super::config::View;
-use crate::os::linux;
+use super::{applications, config::View};
+use crate::os::{linux, Backend};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
+    fmt,
     process::{Command, Stdio},
     sync::mpsc::Sender,
     thread,
     time::{Duration, Instant},
 };
 
-pub fn launch(view: View, events: Sender<String>) {
+#[cfg(test)]
+mod gnome_tests;
+#[cfg(test)]
+mod x11_tests;
+
+// Serialize view runs on a worker so rapid repeated clicks cannot spawn duplicates.
+static VIEW_RUN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+mod matching;
+
+/// One result of a view launch. `zone` indexes the launched view's zones; `None` concerns the whole view.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Report {
+    pub zone: Option<usize>,
+    pub name: String,
+    pub outcome: Outcome,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Outcome {
+    /// An already open window was moved into the zone.
+    Arranged,
+    /// A new window was opened and placed.
+    Opened,
+    Failed(String),
+}
+
+impl Report {
+    fn view(error: String) -> Self {
+        Self {
+            zone: None,
+            name: String::new(),
+            outcome: Outcome::Failed(error),
+        }
+    }
+
+    fn zone(index: usize, name: &str, outcome: Outcome) -> Self {
+        Self {
+            zone: Some(index),
+            name: name.into(),
+            outcome,
+        }
+    }
+
+    pub fn is_success(&self) -> bool {
+        !matches!(self.outcome, Outcome::Failed(_))
+    }
+}
+
+impl fmt::Display for Report {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match &self.outcome {
+            Outcome::Arranged => "existing window arranged",
+            Outcome::Opened => "positioned",
+            Outcome::Failed(error) => error,
+        };
+        if self.zone.is_some() {
+            write!(f, "{}: {text}", self.name)
+        } else {
+            f.write_str(text)
+        }
+    }
+}
+
+pub fn launch(view: View, events: Sender<Report>) {
+    let backend = Backend::detect();
     thread::spawn(move || {
-        let monitors = match linux::monitors() {
+        let _view_run = VIEW_RUN.lock().unwrap_or_else(|error| error.into_inner());
+        let apps = if view
+            .zones
+            .iter()
+            .any(|zone| zone.application.is_some() || zone.run_in_terminal)
+        {
+            applications::discover()
+        } else {
+            Vec::new()
+        };
+        let monitors = match backend.monitors() {
             Ok(monitors) => monitors,
-            Err(e) => {
-                let _ = events.send(e);
+            Err(error) => {
+                let _ = events.send(Report::view(error));
                 return;
             }
         };
-        for zone in view.zones {
-            let events = events.clone();
-            let Some(monitor) = monitors.iter().find(|m| m.name == zone.monitor).cloned() else {
-                let _ = events.send(format!(
-                    "{}: monitor {} is disconnected",
-                    zone.name, zone.monitor
-                ));
-                continue;
-            };
-            thread::spawn(move || {
-                let result = (|| -> Result<(), String> {
-                    if zone.command.trim().is_empty() {
-                        return Err("No command configured".into());
-                    }
-                    let existing: HashSet<_> =
-                        linux::windows()?.into_iter().map(|w| w.id).collect();
-                    let child = Command::new("sh")
-                        .args(["-c", &zone.command])
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .spawn()
-                        .map_err(|e| e.to_string())?;
-                    let pid = child.id();
-                    // Reap without blocking the UI or the polling worker.
-                    thread::spawn(move || {
-                        let mut child = child;
-                        let _ = child.wait();
-                    });
-                    let delay_end = Instant::now() + Duration::from_millis(zone.delay_ms);
-                    let deadline = delay_end + Duration::from_secs(5);
-                    let mut pids = HashSet::new();
-                    loop {
-                        linux::descendants(pid, &mut pids);
-                        if Instant::now() >= delay_end {
-                            if let Some(window) =
-                                matching_window(linux::windows()?, &existing, &pids)
-                            {
-                                return linux::position(&window.id, zone.bounds.pixels(&monitor));
-                            }
-                        }
-                        if Instant::now() >= deadline {
-                            return Err("No new window belonging to this process appeared within 5 s (use a new-instance option for single-instance apps)".into());
-                        }
-                        thread::sleep(Duration::from_millis(80));
-                    }
-                })();
-                let message = match result {
-                    Ok(()) => format!("{}: positioned", zone.name),
-                    Err(e) => format!("{}: {e}", zone.name),
+        let windows = match backend.windows() {
+            Ok(windows) => windows,
+            Err(error) => {
+                let _ = events.send(Report::view(error));
+                return;
+            }
+        };
+        let initial: HashSet<_> = windows.iter().map(|window| window.id.clone()).collect();
+        let claimed = std::sync::Mutex::new(HashSet::new());
+        let roots = std::sync::Mutex::new(HashMap::new());
+        let selections: Vec<_> = view
+            .zones
+            .iter()
+            .map(|zone| select_app(zone, &apps))
+            .collect();
+        let app_locks: HashMap<String, std::sync::Mutex<()>> = app_lock_keys(
+            selections
+                .iter()
+                .map(|selection| selection.as_ref().ok()?.as_ref())
+                .map(|app| app.map(|app| app.application.id.as_str())),
+        )
+        .into_iter()
+        .map(|key| (key, std::sync::Mutex::new(())))
+        .collect();
+        let run = Run {
+            backend,
+            initial: &initial,
+            claimed: &claimed,
+            roots: &roots,
+        };
+        thread::scope(|scope| {
+            for (index, (zone, selection)) in view.zones.into_iter().zip(selections).enumerate() {
+                let Some(monitor) = monitors
+                    .iter()
+                    .find(|monitor| monitor.name == zone.monitor)
+                    .cloned()
+                else {
+                    let _ = events.send(Report::zone(
+                        index,
+                        &zone.name,
+                        Outcome::Failed(format!("monitor {} is disconnected", zone.monitor)),
+                    ));
+                    continue;
                 };
-                let _ = events.send(message);
-            });
-        }
+                let selected_app = match selection {
+                    Ok(app) => app,
+                    Err(error) => {
+                        let _ =
+                            events.send(Report::zone(index, &zone.name, Outcome::Failed(error)));
+                        continue;
+                    }
+                };
+                let script = script(&zone);
+                if !script.trim().is_empty()
+                    && selected_app.as_ref().is_some_and(|app| !app.is_terminal)
+                {
+                    let _ = events.send(Report::zone(
+                        index,
+                        &zone.name,
+                        Outcome::Failed(
+                            "choose a terminal application to run a terminal program".into(),
+                        ),
+                    ));
+                    continue;
+                }
+                let matcher = selected_app
+                    .as_ref()
+                    .map(|app| matching::AppMatcher::new(app, script));
+                let reused = matcher.as_ref().and_then(|matcher| {
+                    let mut claimed = claimed.lock().unwrap_or_else(|error| error.into_inner());
+                    matching::reserve(
+                        windows
+                            .iter()
+                            .filter(|window| matcher.reusable(window, &windows))
+                            .cloned(),
+                        &mut claimed,
+                    )
+                });
+                let app_lock = selected_app
+                    .as_ref()
+                    .and_then(|app| app_locks.get(&app.application.id));
+                let events = events.clone();
+                scope.spawn(move || {
+                    let bounds = zone.bounds.pixels(&monitor);
+                    if let Some(window) = reused {
+                        let outcome = match backend.position(&window, &monitor, bounds) {
+                            Ok(()) => Outcome::Arranged,
+                            Err(error) => Outcome::Failed(error),
+                        };
+                        let _ = events.send(Report::zone(index, &zone.name, outcome));
+                        return;
+                    }
+                    let placed = {
+                        let _guard = app_lock
+                            .map(|lock| lock.lock().unwrap_or_else(|error| error.into_inner()));
+                        launch_new(
+                            index,
+                            &zone,
+                            selected_app.as_ref(),
+                            matcher.as_ref(),
+                            &monitor,
+                            run,
+                        )
+                    };
+                    match placed {
+                        Ok(window) => {
+                            let _ = events.send(Report::zone(index, &zone.name, Outcome::Opened));
+                            settle(backend, &window, &monitor, bounds);
+                        }
+                        Err(error) => {
+                            let _ = events.send(Report::zone(
+                                index,
+                                &zone.name,
+                                Outcome::Failed(error),
+                            ));
+                        }
+                    }
+                });
+            }
+        });
     });
 }
 
-fn matching_window(
+#[derive(Clone, Copy)]
+struct Run<'a> {
+    backend: Backend,
+    initial: &'a HashSet<String>,
+    claimed: &'a std::sync::Mutex<HashSet<String>>,
+    roots: &'a std::sync::Mutex<HashMap<usize, u32>>,
+}
+
+struct RootGuard<'a> {
+    roots: &'a std::sync::Mutex<HashMap<usize, u32>>,
+    index: usize,
+}
+
+impl Drop for RootGuard<'_> {
+    fn drop(&mut self) {
+        self.roots
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.index);
+    }
+}
+
+fn script(zone: &super::config::Zone) -> &str {
+    if zone.run_in_terminal {
+        &zone.command
+    } else {
+        &zone.terminal_command
+    }
+}
+
+fn select_app(
+    zone: &super::config::Zone,
+    apps: &[applications::InstalledApp],
+) -> Result<Option<applications::InstalledApp>, String> {
+    if let Some(selected) = &zone.application {
+        apps.iter()
+            .find(|app| app.application.id == selected.id)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "{} is no longer available. Choose another application for this zone.",
+                    selected.name
+                )
+            })
+            .map(Some)
+    } else if zone.run_in_terminal {
+        applications::default_terminal(apps).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+/// Application ids whose launches must not overlap. Terminal servers can open every window of
+/// all their zones inside one process, so script zones need the same lock as plain ones.
+fn app_lock_keys<'a>(apps: impl IntoIterator<Item = Option<&'a str>>) -> HashSet<String> {
+    apps.into_iter().flatten().map(str::to_string).collect()
+}
+
+/// Pauses before re-applying the placement of a newly opened window.
+const SETTLE_MS: [u64; 3] = [250, 500, 1000];
+
+/// Freshly started apps (e.g. Ptyxis with restore-window-size, Zen) may apply
+/// their saved size or position after the window first appears, overriding
+/// the zone. Re-apply it a few times; stop once the window is gone.
+fn settle(
+    backend: Backend,
+    window: &linux::Window,
+    monitor: &super::monitor::Monitor,
+    bounds: (i32, i32, u32, u32),
+) {
+    for pause in SETTLE_MS {
+        thread::sleep(Duration::from_millis(pause));
+        if backend.position(window, monitor, bounds).is_err() {
+            return;
+        }
+    }
+}
+
+fn launch_new(
+    index: usize,
+    zone: &super::config::Zone,
+    app: Option<&applications::InstalledApp>,
+    matcher: Option<&matching::AppMatcher>,
+    monitor: &super::monitor::Monitor,
+    run: Run,
+) -> Result<linux::Window, String> {
+    let script = script(zone);
+    // Checked under the app lock so a same-app zone that just launched is already visible.
+    let app_running = match matcher {
+        Some(matcher) if script.trim().is_empty() => run
+            .backend
+            .windows()?
+            .iter()
+            .any(|window| matcher.owns_pid(window.pid)),
+        _ => false,
+    };
+    // Set when the app is running but offers no New Window action, so no second window can open.
+    let mut single_instance = None;
+    let mut command = if let Some(app) = app {
+        if !script.trim().is_empty() {
+            app.terminal_command(script)?
+        } else if let Some(command) = app_running.then(|| app.new_window_command()).flatten() {
+            command
+        } else {
+            if app_running {
+                single_instance = Some(app.application.name.as_str());
+            }
+            app.command()
+        }
+    } else if !zone.command.trim().is_empty() {
+        let mut command = Command::new("sh");
+        command.args(["-c", &zone.command]);
+        crate::os::child_env::clean(&mut command);
+        command
+    } else {
+        return Err("Choose an application for this zone before launching".into());
+    };
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("Could not start application: {error}"))?;
+    let pid = child.id();
+    run.roots
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(index, pid);
+    let _root = RootGuard {
+        roots: run.roots,
+        index,
+    };
+    let (exit_tx, exit_rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        if let Ok(status) = child.wait() {
+            let _ = exit_tx.send(status);
+        }
+    });
+    let delay_end = Instant::now() + Duration::from_millis(zone.delay_ms);
+    let deadline = delay_end + Duration::from_secs(5);
+    let mut pids = HashSet::new();
+    loop {
+        linux::descendants(pid, &mut pids);
+        if Instant::now() >= delay_end {
+            let windows = run.backend.windows()?;
+            let mut claimed = run
+                .claimed
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let other_roots: HashSet<u32> = run
+                .roots
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .iter()
+                .filter(|(zone, _)| **zone != index)
+                .map(|(_, root)| *root)
+                .collect();
+            let mut windows_per_pid: HashMap<u32, usize> = HashMap::new();
+            for window in &windows {
+                *windows_per_pid.entry(window.pid).or_default() += 1;
+            }
+            let weak = |window: &linux::Window| {
+                matcher.is_some_and(|matcher| matcher.owns_pid(window.pid))
+                    && !linux::has_ancestor(window.pid, &other_roots)
+                    && script_matches(
+                        matching::ProcessIdentity::read(window.pid)
+                            .terminal_command
+                            .as_deref(),
+                        script,
+                        windows_per_pid
+                            .get(&window.pid)
+                            .is_some_and(|count| *count > 1),
+                    )
+            };
+            let window = pick(windows, run.initial, &pids, weak, &mut claimed);
+            drop(claimed);
+            if let Some(window) = window {
+                return run
+                    .backend
+                    .position(&window, monitor, zone.bounds.pixels(monitor))
+                    .map(|()| window);
+            }
+        }
+        if let Ok(status) = exit_rx.try_recv() {
+            if !status.success() {
+                return Err(format!("Program exited with {status}. For terminal programs, enable Run in terminal or choose a terminal application."));
+            }
+        }
+        if Instant::now() >= deadline {
+            if let Some(name) = single_instance {
+                return Err(format!("{name} is already running and its desktop entry offers no New Window action, so no second window opened. Open another window manually, then launch the view again."));
+            }
+            return Err(match app {
+                Some(app) => format!("No new {} window appeared within 5 s.", app.application.name),
+                None => "No new window belonging to this process appeared within 5 s. Select a terminal application for terminal programs.".into(),
+            });
+        }
+        thread::sleep(Duration::from_millis(80));
+    }
+}
+
+/// Whether a fresh window of the app may be this zone's window. A window of a shared server
+/// process cannot carry its own terminal marker, so the app lock is what keeps it unambiguous.
+fn script_matches(marker: Option<&str>, script: &str, shared_process: bool) -> bool {
+    script.trim().is_empty() || shared_process || marker == Some(script)
+}
+
+fn pick(
     windows: Vec<linux::Window>,
-    existing: &HashSet<String>,
-    pids: &HashSet<u32>,
+    initial: &HashSet<String>,
+    own: &HashSet<u32>,
+    weak: impl Fn(&linux::Window) -> bool,
+    claimed: &mut HashSet<String>,
 ) -> Option<linux::Window> {
-    windows
+    let fresh: Vec<_> = windows
         .into_iter()
-        .find(|window| !existing.contains(&window.id) && pids.contains(&window.pid))
+        .filter(|window| !initial.contains(&window.id) && !claimed.contains(&window.id))
+        .collect();
+    let strong: Vec<_> = fresh
+        .iter()
+        .filter(|window| own.contains(&window.pid))
+        .cloned()
+        .collect();
+    let tier = if strong.is_empty() {
+        fresh.into_iter().filter(|window| weak(window)).collect()
+    } else {
+        strong
+    };
+    matching::reserve(tier, claimed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn window(id: &str, pid: u32) -> linux::Window {
+        linux::Window { id: id.into(), pid }
+    }
+
     #[test]
-    fn ignores_existing_windows_and_unrelated_processes() {
-        let existing = HashSet::from(["old".to_string()]);
-        let pids = HashSet::from([123, 124]);
-        let windows = vec![
-            linux::Window {
-                id: "old".into(),
-                pid: 123,
-            },
-            linux::Window {
-                id: "unrelated".into(),
-                pid: 999,
-            },
-            linux::Window {
-                id: "child".into(),
-                pid: 124,
-            },
-        ];
+    fn every_selected_app_gets_a_lock_key() {
+        let keys = app_lock_keys([Some("a"), Some("a"), Some("b"), None, Some("c")]);
         assert_eq!(
-            matching_window(windows, &existing, &pids).unwrap().id,
-            "child"
+            keys,
+            HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()])
         );
-        assert!(matching_window(
-            vec![linux::Window {
-                id: "other".into(),
-                pid: 999
-            }],
-            &existing,
-            &pids
-        )
-        .is_none());
+    }
+
+    #[test]
+    fn script_matches_marker_or_shared_process() {
+        // Empty scripts never need a marker.
+        assert!(script_matches(None, "", false));
+        assert!(script_matches(Some("htop"), " ", false));
+        // A matching marker always passes.
+        assert!(script_matches(Some("htop"), "htop", false));
+        // Without a marker or a shared process the window is rejected.
+        assert!(!script_matches(None, "htop", false));
+        assert!(!script_matches(Some("top"), "htop", false));
+        // A shared server process cannot identify its window, so the serialized launch decides.
+        assert!(script_matches(None, "htop", true));
+        assert!(script_matches(Some("top"), "htop", true));
+    }
+
+    #[test]
+    fn pick_prefers_own_tree_and_ignores_existing_or_claimed_windows() {
+        let existing = HashSet::from(["old".to_string()]);
+        let own = HashSet::from([124]);
+        let windows = || {
+            vec![
+                window("old", 124),
+                window("unrelated", 999),
+                window("weak", 200),
+                window("child", 124),
+            ]
+        };
+        let mut claimed = HashSet::new();
+        let weak = |window: &linux::Window| window.pid == 200;
+        let picked = pick(windows(), &existing, &own, weak, &mut claimed).unwrap();
+        assert_eq!(picked.id, "child");
+        assert!(pick(windows(), &existing, &own, weak, &mut claimed)
+            .is_some_and(|window| window.id == "weak"));
+        assert!(pick(windows(), &existing, &own, weak, &mut claimed).is_none());
+    }
+
+    #[test]
+    fn pick_uses_weak_matches_only_without_own_windows() {
+        let own = HashSet::from([124]);
+        let windows = vec![window("weak", 200), window("rejected", 201)];
+        let mut claimed = HashSet::new();
+        let picked = pick(
+            windows,
+            &HashSet::new(),
+            &own,
+            |window| window.id == "weak",
+            &mut claimed,
+        );
+        assert_eq!(picked.map(|window| window.id), Some("weak".into()));
+        let mut claimed = HashSet::new();
+        let picked = pick(
+            vec![window("weak", 200), window("child", 124)],
+            &HashSet::new(),
+            &own,
+            |_| false,
+            &mut claimed,
+        );
+        assert_eq!(picked.map(|window| window.id), Some("child".into()));
     }
 }

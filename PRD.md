@@ -2,7 +2,8 @@
 
 **Project Name:** HerdCtrl  
 **Version:** 1.0 (Specification)  
-**Target OS (Initial):** Ubuntu (Linux / X11)  
+**Target OS:** Ubuntu (Linux / X11), plus GNOME 50 on Wayland via the HerdCtrl Shell extension
+
 **Tech Stack:** Rust (`egui` / `eframe`, `serde_json`, `wmctrl` / X11 API bindings)
 
 ---
@@ -52,6 +53,7 @@ Power users, developers, and sysadmins who frequently open complex setups (e.g.,
 ### 4.4. Triggering Mechanisms
 * **Dashboard Launcher:** Visual buttons inside the HerdCtrl GUI to launch any View instantly.
 * **Global Hotkeys:** Assign custom key combinations (e.g., `Super + Shift + C`) to trigger specific views globally, even when HerdCtrl is running in the background.
+* **Tray Process (user-approved scope extension):** A lightweight background process without an editor window owns the global hotkeys and shows a system tray icon (StatusNotifierItem). Its menu launches views, opens the editor, toggles start at login and quits. It reloads the configuration after saving and reports errors as desktop notifications.
 
 ### 4.5. The Launch & Move Engine (Linux/Ubuntu X11 Execution Pipeline)
 Upon triggering a View:
@@ -59,6 +61,18 @@ Upon triggering a View:
 2. **Process Spawning:** Launch each zone's defined shell command asynchronously via `std::process::Command`, recording the target Process ID (PID).
 3. **Window Polling:** Execute an asynchronous polling loop to wait until a valid window handle associated with the process appears in the window manager window stack.
 4. **Window Manipulation:** Apply position and resize attributes to the window handle using native system calls / `wmctrl` (`wmctrl -r <WINDOW> -e 0,x,y,w,h`).
+
+---
+
+### 4.6. GNOME / Wayland support (user-approved scope extension)
+
+* Support the current Ubuntu GNOME 50 Wayland desktop through a bundled, separately enabled GNOME Shell extension. Keep the Rust application and X11 backend; no Electron or Node.js runtime is required.
+* The extension exposes a versioned session D-Bus bridge for logical monitor geometry, connector names and scaling, process-associated windows, window movement/resizing, and global shortcuts. Both native Wayland and XWayland application windows are eligible.
+* Use compositor logical coordinates consistently for the canvas and placement; do not multiply them by monitor scale again. Existing percentage-based layouts remain compatible.
+* The Rust UI may run via XWayland. This does not limit the compositor bridge to X11 windows.
+* Missing/disabled extensions, shortcut conflicts, disconnected monitors and unsupported Wayland compositors must produce actionable messages. Never silently route Wayland window control through `wmctrl`.
+* Keep bridge calls and shortcut polling outside the UI thread, bound helper calls with timeouts, release shortcut grabs on disable and after an expired application heartbeat, and do not move unrelated windows.
+* Provide repeatable bridge/protocol tests and extension installation instructions. Real GNOME desktop acceptance remains distinct from simulated tests. Support for other GNOME versions requires explicit compatibility verification.
 
 ---
 
@@ -71,6 +85,7 @@ herdctrl/
 │   └── icon.png
 └── src/
     ├── main.rs           # Application entrypoint & event loop
+    ├── tray.rs           # Background tray process & global hotkeys
     ├── ui/
     │   ├── mod.rs        # UI module routing
     │   ├── canvas.rs     # Interactive monitor canvas & zone drawing logic
@@ -100,5 +115,4 @@ herdctrl/
 
 * macOS support via Accessibility API (`AXUIElement`).
 * Windows support via Win32 API (`SetWindowPos`).
-* Native Wayland Compositor IPC integrations (e.g., Hyprland / KDE Plasma IPC).
-* Tray Icon / Minimization to system notification area.
+* Additional Wayland compositor integrations (e.g., Hyprland / KDE Plasma IPC); GNOME 50 is covered by section 4.6.

@@ -1,0 +1,6 @@
+{
+  "uuid": "herdctrl@herdctrl.local",
+  "name": "HerdCtrl",
+  "description": "Monitor, window placement and global shortcut bridge for HerdCtrl on GNOME Wayland.",
+  "shell-version": ["50"]
+}
