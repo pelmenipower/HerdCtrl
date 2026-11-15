@@ -82,7 +82,7 @@ For releases from 0.2.0 on, one command installs HerdCtrl for the current user a
 curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/install.sh | bash
 ```
 
-Update later with `herdctrl-update`, from the tray menu or with the editor's update pill; remove it with `herdctrl-update --uninstall` (`--purge` also removes the configuration). The daily update check can be turned off; see the [user guide](docs/manual.md#install-with-one-command). Windows will follow later.
+Update later with `herdctrl-update`, from the tray menu or with the editor's update pill; remove it with `herdctrl-update --uninstall` (`--purge` also removes the configuration). The daily update check can be turned off; see the [user guide](docs/manual.md#update-check-and-privacy). Windows will follow later.
 
 ## Install from source
 

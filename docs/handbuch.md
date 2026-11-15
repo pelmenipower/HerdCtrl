@@ -56,7 +56,7 @@ Für Ubuntu 24.04 oder neuer (x86_64), Release 0.2.0 oder neuer:
 curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/install.sh | bash
 ```
 
-Der Installer arbeitet nur für deinen Benutzer, ohne `sudo` für HerdCtrl selbst. Er lädt das Release, prüft die Prüfsummen (und die Sigstore-Signatur, wenn `cosign` installiert ist) und legt dann alles ab, bevor er etwas überschreibt:
+Der Installer arbeitet nur für deinen Benutzer, ohne `sudo` für HerdCtrl selbst. Er lädt das Release, prüft die Prüfsummen (und die Sigstore-Signatur, wenn `cosign` installiert ist) und prüft alles, bevor er etwas überschreibt. Danach legt er ab:
 
 - `~/.local/bin/herdctrl` und `~/.local/bin/herdctrl-update`
 - Desktop-Eintrag und Icons unter `~/.local/share`
@@ -80,7 +80,7 @@ Optionen (`bash install.sh --help`):
 
 Exit-Codes: 0 Erfolg oder nichts zu tun, 1 Fehler, 2 falsche Bedienung, 10 Update verfügbar (`--check`).
 
-Der Installer gibt es erst ab Release 0.2.0. Release 0.1.0 hat noch keinen; dafür gilt weiter [Bauen](#bauen) oder das Tarball unter [Download prüfen](#download-prüfen). Windows folgt später.
+Der Installer gibt es erst ab Release 0.2.0. Release 0.1.0 hat noch keinen; dafür gilt weiter [Aus dem Quellcode bauen](#aus-dem-quellcode-bauen) oder das Tarball unter [Download prüfen](#download-prüfen). Windows folgt später.
 
 ### Aus dem Quellcode bauen
 
@@ -159,7 +159,9 @@ curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/upd
 ```
 
   `update.sh` führt das installierte `herdctrl-update` aus, sonst den geprüften Installer des neuesten Releases. Optionen des Installers (`--reinstall`, `--version`, `--extension` …) gelten auch für `herdctrl-update`.
-- `herdctrl-update --extension` installiert die GNOME-Shell-Erweiterung nachträglich, ohne Quellbaum.
+- `herdctrl-update --extension` installiert die GNOME-Shell-Erweiterung nachträglich, ohne Quellbaum. Das geht auch, wenn die aktuelle Version schon installiert ist.
+- `--reinstall` wiederholt die Installation der aktuellen Version.
+- Ein Update biegt außerdem einen vorhandenen Autostart-Eintrag (**Start at login**) auf `~/.local/bin/herdctrl` um, auch wenn er einen selbst gebauten Stand startete.
 - Im **Tray** erscheint bei einem neuen Release eine Benachrichtigung („HerdCtrl X is available“) und der Menüeintrag **Update to X…**. Er öffnet den Updater in einem Terminal.
 - Im **Editor** zeigt der Kopf die Pille **Update available · X**. Darin öffnet **Update now** den Updater in einem Terminal, **What's new** die Release-Notizen im Browser.
 
@@ -178,8 +180,8 @@ Der Installer beendet vorher den laufenden Tray und entfernt den Autostart-Eintr
 
 Der Tray fragt höchstens einmal pro Tag per HTTPS bei github.com nach dem neuesten Release (ein `curl`-Aufruf, der nur die Weiterleitung von `releases/latest` liest). GitHub sieht dabei deine IP-Adresse und den curl-User-Agent; HerdCtrl sendet nichts anderes und lädt nichts herunter.
 
-- Ausschalten: Haken **Check for updates daily** im Tray-Menü wegnehmen, oder `HERDCTRL_NO_UPDATE_CHECK` setzen (zum Beispiel `HERDCTRL_NO_UPDATE_CHECK=1`). Mit der Variablen ist der Haken ausgegraut und es gibt keine Anfrage.
-- Ergebnis und Einstellung stehen in `~/.config/herdctrl/update.json` (siehe [Dateien](#dateien)).
+- Ausschalten: Haken **Check for updates daily** im Tray-Menü wegnehmen, oder `HERDCTRL_NO_UPDATE_CHECK` setzen (zum Beispiel `HERDCTRL_NO_UPDATE_CHECK=1`). Mit der Variablen (jeder nichtleere Wert außer `0`) ist der Haken ausgegraut und es gibt keine Anfrage; `0` oder leer schalten die Prüfung nicht ab.
+- Ergebnis und Einstellung stehen in `~/.config/herdctrl/update.json` (siehe [Dateien](#dateien)). Ist die Datei ungültig, steht der Haken auf „aus“, bleibt aber bedienbar; Einschalten schreibt eine neue Datei.
 - `herdctrl --version` gibt die Version aus, `herdctrl --help` die Aufrufe (`--tray`, `--version`, `--help`).
 
 ## Erster Start
@@ -347,10 +349,10 @@ Programme, die sich selbst aktualisieren (die laufende Programmdatei erscheint a
 | Menüeintrag | Wirkung |
 |---|---|
 | *View-Name (Hotkey)* | Startet diese View. |
+| **Update to X…** | Nur wenn ein neueres Release bekannt ist: öffnet den Updater in einem Terminal. |
 | **Edit layouts…** | Öffnet den Editor. |
 | **Start at login** | Schreibt oder entfernt `~/.config/autostart/herdctrl.desktop`. |
 | **Check for updates daily** | Schaltet die tägliche Update-Prüfung (siehe [Update-Prüfung und Datenschutz](#update-prüfung-und-datenschutz)). |
-| **Update to X…** | Nur wenn ein neueres Release bekannt ist: öffnet den Updater in einem Terminal. |
 | **Quit HerdCtrl** | Beendet den Tray und gibt die Hotkeys frei. |
 
 - Der Editor startet beim Öffnen auch den Tray, falls er nicht läuft. Speichern im Editor startet ihn wieder, falls du ihn beendet hattest.

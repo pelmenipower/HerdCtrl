@@ -7,6 +7,7 @@ Complete description of HerdCtrl. The short overview is in the [README](../READM
 HerdCtrl arranges application windows into named **views**. A view is a set of **zones** drawn on your monitors. Each zone holds one application, a program in a terminal, or a custom command. Launching a view, by button, tray menu or global hotkey, starts what is missing and moves every window into its zone.
 
 - [Installation](#installation)
+- [Update and uninstall](#update-and-uninstall)
 - [First start](#first-start)
 - [The editor](#the-editor)
 - [Views](#views)
@@ -53,26 +54,22 @@ For releases from 0.2.0 on, one command installs HerdCtrl for the current user (
 curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/install.sh | bash
 ```
 
-The installer downloads the release, verifies every file against `SHA256SUMS` before installing anything, installs missing runtime packages with APT (it asks for `sudo` only for that), and puts `herdctrl` and `herdctrl-update` into `~/.local/bin` and the desktop entry and icons into `~/.local/share`. On GNOME/Wayland it also installs the Shell extension; log out and back in once, then enable it as described below. Release 0.1.0 has no installer: use the archive or build from source as before.
+The installer downloads the release, verifies every file against `SHA256SUMS` (and the Sigstore signature if `cosign` is installed) before installing anything, installs missing runtime packages with APT (it asks for `sudo` only for that), and puts `herdctrl` and `herdctrl-update` into `~/.local/bin` and the desktop entry and icons into `~/.local/share`. It also writes `~/.local/share/herdctrl/installed-version`, a stamp with the installed version. On GNOME/Wayland it installs the Shell extension too; log out and back in once so GNOME loads it. `~/.local/bin` must be in your `PATH`; the installer tells you if it is not. Release 0.1.0 has no installer: use the archive or build from source as before.
 
-`bash install.sh --help` lists the options: `--version X.Y.Z`, `--archive PATH`, `--check`, `--reinstall`, `--no-packages`, `--extension`, `--no-extension`, `--uninstall`, `--purge`. `--archive` installs a local `herdctrl-vX.Y.Z-linux-x86_64.tar.gz` and does **not** check checksums. Exit codes: 0 success or nothing to do, 1 error, 2 usage error, 10 update available (`--check`).
+`bash install.sh --help` lists the options:
 
-### Update
+| Option | Effect |
+|---|---|
+| `--version X.Y.Z` | Install this release instead of the latest |
+| `--archive PATH` | Install a local `herdctrl-vX.Y.Z-linux-x86_64.tar.gz`. Does **not** check checksums; use only files you trust. |
+| `--check` | Report the installed and latest version; exit code 10 if an update is available |
+| `--reinstall` | Install even if this version is already installed |
+| `--no-packages` | Do not install missing runtime packages with APT |
+| `--extension` | Install the GNOME Shell extension outside GNOME/Wayland as well |
+| `--no-extension` | Do not install the extension |
+| `--uninstall`, `--purge` | See [Update and uninstall](#update-and-uninstall) |
 
-- Terminal: `herdctrl-update` installs the latest release. `herdctrl-update --check` only reports the installed and latest version and exits with 10 if an update is available.
-- Without the installed script, run the one-liner again, or `curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/update.sh | bash`.
-- Tray: when a release is found, a notification appears once and the menu gets **Update to X…**.
-- Editor: the header shows an **Update available · X** pill with **Update now** and **What's new**.
-
-`herdctrl-update --extension` installs the GNOME Shell extension from the release, for installs without a source tree. `--reinstall` repeats the installation of the current version.
-
-### Uninstall
-
-`herdctrl-update --uninstall` removes the program, the desktop entry, the icons and the extension. Your configuration is kept. `herdctrl-update --uninstall --purge` removes `~/.config/herdctrl` as well.
-
-### Update check and privacy
-
-The tray asks GitHub once a day whether a newer release exists: one HTTPS request to `github.com`, sent with `curl`. GitHub sees your IP address and the `curl` user agent; nothing else is sent. Turn it off with the tray item **Check for updates daily**, or set `HERDCTRL_NO_UPDATE_CHECK` in the tray's environment; then no request is made. The result is stored in `update.json` next to `layouts.json`.
+Exit codes: 0 success or nothing to do, 1 error, 2 usage error, 10 update available (`--check`).
 
 ### Version
 
@@ -139,6 +136,43 @@ GNOME 50 is the compatibility target. Other GNOME versions need their own verifi
 ### Tray icon
 
 The tray uses the StatusNotifierItem protocol. GNOME shows it only with the AppIndicator extension (`ubuntu-appindicators@ubuntu.com`, enabled by default on Ubuntu). Without a tray host, hotkeys keep working, but the icon is hidden. It appears as soon as a host becomes available, for example after unlocking the screen.
+
+## Update and uninstall
+
+### Update
+
+- `herdctrl-update` checks the latest release and installs it if it is newer. It stops a running tray and starts it again with the new version; an open editor stays on the old version until you close it. On GNOME/Wayland it waits 16 seconds only if the old tray had to be killed or the previous version is unknown, so that GNOME releases its shortcuts. Without a graphical session the old tray keeps running until you quit it.
+- `herdctrl-update --check` only reports the installed and latest version. Exit code 10 means an update is available.
+- Without the installed script (or from a terminal without the path):
+
+```sh
+curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/update.sh | bash
+```
+
+  `update.sh` runs the installed `herdctrl-update`, otherwise the verified installer of the latest release. All installer options (`--reinstall`, `--version`, `--extension` …) also work with `herdctrl-update`.
+- `herdctrl-update --extension` installs the GNOME Shell extension from the release, for installs without a source tree. It also works when the current version is already installed. After updating an already loaded extension, log out and back in.
+- `--reinstall` repeats the installation of the current version.
+- An update also points an existing autostart entry (**Start at login**) at `~/.local/bin/herdctrl`, including entries that started a source build.
+- **Tray:** when a release is found, a notification ("HerdCtrl X is available") appears once and the menu gets **Update to X…**. It opens the updater in a terminal.
+- **Editor:** the header shows an **Update available · X** pill. **Update now** opens the updater in a terminal, **What's new** opens the release notes in the browser.
+
+Updating through the installer exists from release 0.2.0 on. An install of 0.1.0 (from source or the tarball) has no stamp; the installer reports it as "unknown" and replaces it when you run `herdctrl-update` or the one-liner.
+
+### Uninstall
+
+```sh
+herdctrl-update --uninstall           # program, desktop entry, icons, extension; your layouts stay
+herdctrl-update --uninstall --purge   # also removes ~/.config/herdctrl
+```
+
+The installer first stops the running tray and removes the autostart entry if it points to this installation. An autostart entry that starts another HerdCtrl is left alone.
+
+### Update check and privacy
+
+The tray asks GitHub at most once a day whether a newer release exists: one HTTPS request to `github.com`, sent with `curl`, which only reads the redirect of `releases/latest`. GitHub sees your IP address and the `curl` user agent; HerdCtrl sends nothing else and downloads nothing.
+
+- Turn it off with the tray item **Check for updates daily**, or set `HERDCTRL_NO_UPDATE_CHECK` in the tray's environment (any non-empty value except `0`). With the variable set, the checkmark is greyed out and no request is made. Setting it to `0` or empty does not turn the check off.
+- The result and the setting are stored in `~/.config/herdctrl/update.json` (see [Files](#files)). If that file is invalid, the checkmark shows as off but stays clickable; turning it on writes a new file.
 
 ## First start
 
@@ -305,10 +339,10 @@ Apps that update themselves (the running binary shows as *(deleted)*) are still 
 | Menu item | Action |
 |---|---|
 | *View name (hotkey)* | Launches that view. |
-| **Edit layouts…** | Opens the editor. |
 | **Update to X…** | Appears when a newer release exists; opens the updater in a terminal. |
-| **Check for updates daily** | Checkmark; turns the daily update check on or off. |
+| **Edit layouts…** | Opens the editor. |
 | **Start at login** | Writes or removes `~/.config/autostart/herdctrl.desktop`. |
+| **Check for updates daily** | Checkmark; turns the daily update check on or off (see [Update check and privacy](#update-check-and-privacy)). |
 | **Quit HerdCtrl** | Ends the tray and releases the hotkeys. |
 
 - Starting the editor also starts the tray if it is not running. Saving in the editor starts it again if you had quit it.
