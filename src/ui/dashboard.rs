@@ -13,12 +13,14 @@ use crate::{
         config::{Config, View},
         launcher::{self, Report},
         monitor::{sort_for_display, Monitor},
+        update,
     },
     os::Backend,
     tray,
 };
 use eframe::egui::{
-    self, Align, Align2, FontId, Frame, Layout, Margin, RichText, Sense, Stroke, Theme, Vec2,
+    self, Align, Align2, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Sense,
+    Stroke, Theme, Vec2,
 };
 use global_hotkey::hotkey::HotKey;
 use std::{
@@ -64,6 +66,12 @@ pub struct Dashboard {
     tray_running: bool,
     tray_checked: Instant,
     autostart: bool,
+    /// Newer release found by the tray, read from update.json.
+    update: Option<update::Version>,
+    /// `None` in tests: they never read the machine's update.json.
+    update_checked: Option<Instant>,
+    update_tx: Sender<Result<(), String>>,
+    update_rx: Receiver<Result<(), String>>,
 }
 
 impl Dashboard {
@@ -79,6 +87,8 @@ impl Dashboard {
             let _ = theme_tx.send(theme::system_theme());
         });
         app.theme_rx = theme_rx;
+        app.update = load_update();
+        app.update_checked = Some(Instant::now());
         app.refresh();
         app.refresh_applications();
         app
@@ -98,6 +108,7 @@ impl Dashboard {
         let (report_tx, reports) = mpsc::channel();
         let (monitor_tx, monitor_rx) = mpsc::channel();
         let (applications_tx, applications_rx) = mpsc::channel();
+        let (update_tx, update_rx) = mpsc::channel();
         let selected_zone = config
             .views
             .first()
@@ -142,6 +153,10 @@ impl Dashboard {
             tray_running: tray::is_running(),
             tray_checked: Instant::now(),
             autostart: tray::autostart_enabled(),
+            update: None,
+            update_checked: None,
+            update_tx,
+            update_rx,
         }
     }
 
@@ -452,6 +467,19 @@ impl Dashboard {
             self.tray_running = tray::is_running();
             self.autostart = tray::autostart_enabled();
         }
+        while let Ok(result) = self.update_rx.try_recv() {
+            self.log.push(match result {
+                Ok(()) => "Updater opened in a terminal".to_string(),
+                Err(e) => format!("Updater could not start: {e}"),
+            });
+        }
+        if self
+            .update_checked
+            .is_some_and(|at| at.elapsed() > Duration::from_secs(60))
+        {
+            self.update_checked = Some(Instant::now());
+            self.update = load_update();
+        }
         if self.log.len() > 100 {
             self.log.drain(..self.log.len() - 100);
         }
@@ -490,6 +518,38 @@ impl Dashboard {
                         self.log.push(format!("Tray could not start: {e}"));
                     }
                     self.tray_checked = Instant::now() - Duration::from_secs(10);
+                }
+                if let Some(version) = self.update {
+                    let response = theme::pill(ui, &update_pill_text(version), Tone::Accent)
+                        .interact(Sense::click())
+                        .on_hover_text("Click for options");
+                    let popup = egui::Id::new("update-popup");
+                    if response.clicked() {
+                        ui.memory_mut(|m| m.toggle_popup(popup));
+                    }
+                    egui::popup_below_widget(
+                        ui,
+                        popup,
+                        &response,
+                        PopupCloseBehavior::CloseOnClickOutside,
+                        |ui| {
+                            ui.set_min_width(140.0);
+                            if theme::button(ui, "Update now").clicked() {
+                                // launch_updater blocks (app scan, terminal probe): worker only.
+                                let tx = self.update_tx.clone();
+                                std::thread::spawn(move || {
+                                    let _ = tx.send(update::launch_updater());
+                                });
+                                ui.memory_mut(|m| m.close_popup());
+                            }
+                            if theme::ghost(ui, "What's new").clicked() {
+                                if let Err(e) = update::open_release_notes(version) {
+                                    self.log.push(format!("Release notes could not open: {e}"));
+                                }
+                                ui.memory_mut(|m| m.close_popup());
+                            }
+                        },
+                    );
                 }
                 match (self.backend, &self.display_error) {
                     (Backend::Gnome, None) => {
@@ -1335,9 +1395,27 @@ mod interactions;
 #[cfg(test)]
 mod snapshots;
 
+/// Newer release from update.json; an unreadable file counts as no update.
+fn load_update() -> Option<update::Version> {
+    let path = update::State::path().ok()?;
+    update::available(&update::State::load(&path).ok()?)
+}
+
+fn update_pill_text(version: update::Version) -> String {
+    format!("Update available · {version}")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::selection_after_removal;
+    use super::{selection_after_removal, update_pill_text};
+
+    #[test]
+    fn update_pill_names_the_version() {
+        assert_eq!(
+            update_pill_text(crate::core::update::Version(0, 2, 0)),
+            "Update available · 0.2.0"
+        );
+    }
 
     #[test]
     fn selects_previous_view_after_removal() {

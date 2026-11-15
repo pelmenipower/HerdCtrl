@@ -187,6 +187,10 @@ fn recording(d: &mut Dashboard) {
     d.dirty = true;
 }
 
+fn update_available(d: &mut Dashboard) {
+    d.update = Some(crate::core::update::Version(0, 2, 0));
+}
+
 fn first_run(d: &mut Dashboard) {
     d.config.views.clear();
     d.selected_zone = None;
@@ -204,6 +208,7 @@ fn render_ui_snapshots() {
         render(&format!("picker-{suffix}"), theme, picker);
         render(&format!("recording-{suffix}"), theme, recording);
         render(&format!("first-run-{suffix}"), theme, first_run);
+        render(&format!("update-{suffix}"), theme, update_available);
     }
 }
 
