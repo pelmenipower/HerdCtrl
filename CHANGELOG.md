@@ -24,6 +24,10 @@ Erste Fassung, entwickelt auf `feature/initial-app` vom 2026-10-31 bis 2026-11-1
 - Behoben: Programme, die sich selbst aktualisiert haben (Programmdatei *(deleted)*), werden wieder erkannt.
 - Behoben: Starts derselben Anwendung laufen nacheinander, damit sich Zonen nicht gegenseitig Fenster wegnehmen.
 
+### Speicher
+
+- Neu: Der Editor zeichnet mit Vulkan und öffnet nur den Treiber der verbauten GPU. Er braucht damit 28,8 bis 30,5 statt 77,3 MB und ist nach 30 statt 59 ms sichtbar (Intel-GPU, GNOME 50). Die eingebauten egui-Schriften entfallen; drei Symbole sind dafür ersetzt oder gezeichnet. Auf Laptops mit zwei GPUs bleibt die dedizierte im Ruhezustand. Ohne nutzbares Vulkan fällt er von selbst auf OpenGL zurück (dann etwa 85 MB); `HERDCTRL_RENDERER=glow` erzwingt das. Gestartete Programme erben die Treiberauswahl des Editors nicht. Die Programmdatei wächst auf 9,2 MB.
+
 ### Tray und Hotkeys
 
 - Neu: `herdctrl --tray` hält die globalen Hotkeys mit etwa 2 MB eigenem Speicher, auch wenn der Editor geschlossen ist. Das Menü startet Views und öffnet den Editor, außerdem schaltet es **Start at login** und beendet HerdCtrl. Konfigurationsänderungen übernimmt der Tray nach etwa einer Sekunde, Fehler meldet er als Desktop-Benachrichtigung.
@@ -38,4 +42,4 @@ Erste Fassung, entwickelt auf `feature/initial-app` vom 2026-10-31 bis 2026-11-1
 - Neu: Release-Workflow für Tags `v*`. Er baut die Linux-Dateien, signiert `SHA256SUMS` schlüssellos mit Sigstore, legt eine GitHub-Build-Bescheinigung an und erstellt nur einen Entwurf, den der Benutzer veröffentlicht. Die Prüfung beschreiben beide Handbücher.
 - Doku: README nach Shellherd-Vorbild mit Galerie, ausführliches Handbuch auf Deutsch und Englisch, Designsystem, Anleitung für die Screenshots, `CLAUDE.md` sowie die Skills `run-app` und `feature-pipeline`.
 - Tests: Bedienabläufe mit `egui_kittest` ohne GPU. Dazu kommen Screenshots auf Abruf, eine X11-Integration unter Xvfb und Openbox in der CI (jetzt mit `xwininfo` gemessen), ein Rust↔GJS-Protokolltest und Live-Tests für GNOME.
-- Messung: Programmdatei 7,8 MB und 69 ms bis zum sichtbaren Editorfenster. Der Editor braucht 75,7 MB (PRD-Ziel 30 MB nicht erreicht), der Tray 1,8 MB eigenen Speicher. Details in [VALIDATION.md](VALIDATION.md).
+- Messung: siehe Abschnitt *Speicher*; der Tray braucht 1,8 MB eigenen Speicher. Details in [VALIDATION.md](VALIDATION.md).

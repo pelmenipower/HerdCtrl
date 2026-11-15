@@ -1,3 +1,4 @@
+pub mod child_env;
 pub mod gnome;
 pub mod linux;
 

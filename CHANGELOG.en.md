@@ -24,6 +24,10 @@ First version, developed on `feature/initial-app` from 2026-10-31 to 2026-11-10.
 - Fixed: apps that updated themselves (executable shown as *(deleted)*) are recognized again.
 - Fixed: launches of the same app run one after another, so zones no longer take each other's windows.
 
+### Memory
+
+- New: the editor draws with Vulkan and opens only the driver of the installed GPU. It needs 28.8 to 30.5 instead of 77.3 MB and is visible after 30 instead of 59 ms (Intel GPU, GNOME 50). egui's bundled fonts are dropped; three symbols were replaced or are painted instead. On laptops with two GPUs, the discrete one stays asleep. Without a usable Vulkan device it falls back to OpenGL by itself (then about 85 MB); `HERDCTRL_RENDERER=glow` forces that. Programs HerdCtrl starts do not inherit the editor's driver selection. The binary grows to 9.2 MB.
+
 ### Tray and hotkeys
 
 - New: `herdctrl --tray` owns the global hotkeys with about 2 MB of its own memory, even while the editor is closed. Its menu launches views, opens the editor, toggles **Start at login** and quits HerdCtrl. It picks up configuration changes within about a second and reports errors as desktop notifications.
@@ -38,4 +42,4 @@ First version, developed on `feature/initial-app` from 2026-10-31 to 2026-11-10.
 - New: release workflow for `v*` tags. It builds the Linux files, signs `SHA256SUMS` keylessly with Sigstore, adds a GitHub build attestation and only creates a draft for the maintainer to publish. Both manuals describe how to verify a download.
 - Docs: README modelled on Shellherd with a gallery, a complete user guide in English and German, the design system, instructions for the screenshots, `CLAUDE.md`, and the `run-app` and `feature-pipeline` skills.
 - Tests: interaction tests with `egui_kittest` that need no GPU. Also opt-in screenshots, an X11 integration under Xvfb and Openbox in CI (now measured with `xwininfo`), a Rust↔GJS protocol test and live GNOME tests.
-- Measured: 7.8 MB binary and 69 ms to a visible editor window. The editor needs 75.7 MB (PRD target of 30 MB not met), and the tray 1.8 MB of its own memory. Details in [VALIDATION.md](VALIDATION.md).
+- Measured: see *Memory*; the tray needs 1.8 MB of its own memory. Details in [VALIDATION.md](VALIDATION.md).

@@ -71,7 +71,7 @@ fn executable() -> Result<PathBuf, String> {
 }
 
 fn spawn_self(args: &[&str]) -> Result<(), String> {
-    let mut child = Command::new(executable()?)
+    let mut child = crate::os::child_env::clean(&mut Command::new(executable()?))
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

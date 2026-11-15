@@ -157,6 +157,8 @@ On Ubuntu X11 with `wmctrl`, `xrandr`, and two connected displays:
 
 ## RSS investigation — 2026-11-07
 
+> Superseded on 2026-11-10: the Vulkan renderer below meets the 30 MB target on this machine. The analysis here is the basis for it.
+
 **Result:** PRD 6 (active RSS < 30 MB) is **not met**. The unchanged build measures a median of 80,356 KiB (about 78.5 MiB) across nine starts. No code reduction was kept, because every candidate was either a no-op or gained less than the 1 MB threshold. PRD.md was not changed.
 
 **Method.** `target/release/herdctrl` was built with `cargo build --release --locked` (4,868,312 bytes). `scripts/measure-rss.sh [runs] [binary]` starts the binary with a throwaway `XDG_CONFIG_HOME`, runs one excluded warm-up, and then samples `VmRSS`, `RssAnon`, `RssFile` and `RssShmem` from `/proc/<pid>/status` one second after an X11 window named `HerdCtrl` appears (`xwininfo -root -tree`, polling up to 5 s). Only the PID it started is signalled. The breakdown came from `/proc/<pid>/smaps` grouped by mapping, with one instance running. Environment: GNOME 50 Wayland session, app via XWayland, Intel Meteor Lake GPU (i915 kernel driver, Mesa 26.0.8 `iris` Gallium driver), 15 GB RAM, no Xvfb.
@@ -280,6 +282,8 @@ Found while restarting the tray with the screen locked: GNOME deactivates extens
 A first fix retried the icon every 5 s. It worked: after unlocking, the icon appeared. But after about 210 failed attempts during a lock, the tray's anonymous memory had grown from 1.8 MB to 19 MB. Each failed ksni spawn leaves its connection's executor task behind. The tray now spawns once with ksni's `assume_sni_available(true)`: without a watcher the item waits and registers when one appears. Check on an isolated `dbus-run-session` bus without a watcher: the tray stayed up with no error, at a steady 7,288 KiB VmRSS / 924 KiB RssAnon over 60 s. On the desktop the icon registered at once (1,836 KiB RssAnon). Not yet verified with the new build: the icon reappearing after a real screen lock. Known limit: ending the tray with a signal instead of Quit leaves its GNOME shortcuts owned for up to 15 s; until then a new tray reports "Another HerdCtrl instance owns the global shortcuts" and then reconnects.
 
 ## Measurements after the redesign — 2026-11-09
+
+> Editor RAM superseded on 2026-11-10, see *Vulkan renderer*.
 
 `scripts/measure-rss.sh` now waits for a HerdCtrl window owned by the started PID (`_NET_WM_PID`), so an open editor no longer makes it sample early. It also reports the time from start until that window is mapped (polling about every 10 ms plus the `xwininfo` call). Five measured starts after one excluded warm-up, release build 7,796,552 bytes, GNOME 50 Wayland, first-start screen with a throwaway configuration:
 
