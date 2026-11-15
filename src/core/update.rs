@@ -1,6 +1,5 @@
 //! Release check state, version parsing and the updater launch. No HTTP in-process:
 //! `fetch_latest` runs curl and must only be called from a worker thread.
-#![allow(dead_code)] // Removed after wave 2, once tray.rs and dashboard.rs use this API.
 
 use crate::core::{applications, config::Config};
 use serde::{Deserialize, Serialize};
