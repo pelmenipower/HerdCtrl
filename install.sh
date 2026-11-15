@@ -10,13 +10,25 @@ readonly EXT_UUID=herdctrl@herdctrl.local
 readonly PACKAGES=(libxkbcommon-x11-0 libxcb-xkb1 libgl1 libvulkan1 mesa-vulkan-drivers wmctrl x11-xserver-utils)
 readonly VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+$'
 readonly SELF=${BASH_SOURCE[0]:-}
+# Set by a handing-over installer. Taken into a shell variable and removed from the environment,
+# so neither the restarted tray nor its children inherit it.
+readonly handoff=${HERDCTRL_INSTALL_HANDOFF:-}
+unset HERDCTRL_INSTALL_HANDOFF
 
 # Global so the EXIT trap can still see it after main returned (set -u).
 work=''
 cleanup() {
+    local status=$?
+    if ((tray_pending)); then
+        tray_pending=0
+        warn 'The installation failed; restarting the tray.'
+        find_procs
+        if ((${#trays[@]} == 0)) && [[ -x $BIN/herdctrl ]]; then start_tray || true; fi
+    fi
     if [[ -n $work ]]; then
         rm -rf -- "$work"
     fi
+    return "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -44,6 +56,7 @@ unpacked_version=''
 trays=()
 editors=()
 killed=0
+tray_pending=0
 
 say() { printf '%s\n' "$*"; }
 warn() { printf '%s\n' "$*" >&2; }
@@ -85,12 +98,12 @@ parse_args() {
                 exit 0
                 ;;
             --version)
-                (($# >= 2)) || usage_error '--version needs a value'
+                (($# >= 2)) && [[ -n $2 ]] || usage_error '--version needs a value'
                 opt_version=${2#v}
                 shift
                 ;;
             --archive)
-                (($# >= 2)) || usage_error '--archive needs a value'
+                (($# >= 2)) && [[ -n $2 ]] || usage_error '--archive needs a value'
                 opt_archive=$2
                 shift
                 ;;
@@ -220,8 +233,8 @@ verify_signature() {
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$work/SHA256SUMS" </dev/null >/dev/null 2>&1 ||
             fail 'the signature of SHA256SUMS does not verify. Nothing was installed.'
-        if [[ -z ${HERDCTRL_INSTALL_HANDOFF:-} ]]; then say 'Signature verified (Sigstore)'; fi
-    elif [[ -z ${HERDCTRL_INSTALL_HANDOFF:-} ]]; then
+        if [[ -z $handoff ]]; then say 'Signature verified (Sigstore)'; fi
+    elif [[ -z $handoff ]]; then
         say 'cosign not found: checksum only (see docs/manual.md#verify-a-download)'
     fi
 }
@@ -295,7 +308,7 @@ stop_trays() {
 
 start_tray() {
     local i
-    (cd "$HOME" && exec env -u HERDCTRL_TERMINAL_COMMAND setsid -f "$BIN/herdctrl" --tray </dev/null >/dev/null 2>&1 9>&-) || true
+    (cd "$HOME" && exec env -u HERDCTRL_TERMINAL_COMMAND -u HERDCTRL_INSTALL_HANDOFF setsid -f "$BIN/herdctrl" --tray </dev/null >/dev/null 2>&1 9>&-) || true
     for ((i = 0; i < 30; i++)); do
         find_procs
         if ((${#trays[@]} > 0)); then return 0; fi
@@ -390,6 +403,8 @@ repoint_autostart() {
     if [[ $prog == '"'*'"' ]]; then
         prog=${prog#\"}
         prog=${prog%\"}
+    elif [[ $prog == *[[:space:]]* ]]; then
+        return 0 # first word is not the whole program part (env FOO=1 …): leave it alone
     fi
     if [[ ${prog##*/} != herdctrl ]]; then return 0; fi
     if [[ $value == "\"$BIN/herdctrl\" --tray" ]]; then return 0; fi
@@ -502,7 +517,7 @@ smoke_test() {
     local out=''
     out=$(timeout 10 "$pkg/herdctrl" --version </dev/null 2>/dev/null) || out=''
     if [[ $out != "herdctrl $version" ]]; then
-        fail "the downloaded program does not start (expected \"herdctrl $version\"). Missing libraries? Run: ldd $pkg/herdctrl"
+        fail "the new program does not start (expected \"herdctrl $version\"). Missing libraries? Install the packages listed in docs/manual.md."
     fi
 }
 
@@ -540,7 +555,7 @@ want_extension() {
 
 handoff_if_stale() {
     local own expected
-    if [[ -n ${HERDCTRL_INSTALL_HANDOFF:-} || ! -f $SELF ]]; then return 0; fi
+    if [[ -n $handoff || ! -f $SELF ]]; then return 0; fi
     fetch install.sh
     verify_asset install.sh
     own=$(sha256sum <"$SELF") || return 0
@@ -568,8 +583,10 @@ do_install() {
         if ((!opt_reinstall)) && is_current; then
             ensure_packages
             repoint_autostart_standalone
-            if ((!opt_no_extension)) && gnome_wayland && [[ ! -d $DATA/gnome-shell/extensions/$EXT_UUID ]]; then
-                say 'The GNOME extension is missing. Run: herdctrl-update --reinstall'
+            if ((opt_extension)); then
+                extension_only
+            elif ((!opt_no_extension)) && gnome_wayland && [[ ! -d $DATA/gnome-shell/extensions/$EXT_UUID ]]; then
+                say 'The GNOME extension is missing. Run: herdctrl-update --extension'
             fi
             say "HerdCtrl $installed is already installed. Nothing to do."
             return 0
@@ -578,7 +595,7 @@ do_install() {
         [[ -f $opt_archive ]] || fail "archive not found: $opt_archive"
     fi
 
-    work=$(mktemp -d -t herdctrl-install.XXXXXXXX)
+    ensure_work
     if [[ -z $opt_archive ]]; then
         fetch SHA256SUMS
         verify_signature
@@ -606,9 +623,10 @@ do_install() {
     smoke_test
 
     find_procs
-    local restart=0 editor_open=${#editors[@]}
+    local restart=0 editor_open=${#editors[@]} had_tray=${#trays[@]}
     if ((${#trays[@]} > 0)); then
         if graphical_session; then
+            tray_pending=1
             stop_trays
             restart=1
             if { [[ $pre_stamp == unknown ]] || ((killed)); } && gnome_wayland; then
@@ -641,8 +659,9 @@ do_install() {
     put_file "$work/stamp" "$DATA/herdctrl/installed-version" 644
 
     if ((restart)); then
+        tray_pending=0
         start_tray
-    else
+    elif ((had_tray == 0)); then
         say 'Start HerdCtrl from the app menu.'
     fi
     if ((editor_open > 0)); then
@@ -656,12 +675,30 @@ do_install() {
     esac
 }
 
+ensure_work() {
+    if [[ -z $work ]]; then work=$(mktemp -d -t herdctrl-install.XXXXXXXX); fi
+}
+
 # The standalone autostart fix needs a scratch directory for its temp file.
 repoint_autostart_standalone() {
     if [[ -f $(autostart_file) ]]; then
-        work=$(mktemp -d -t herdctrl-install.XXXXXXXX)
+        ensure_work
         repoint_autostart
     fi
+}
+
+# --extension on an up-to-date install: verified extension only, tray untouched.
+extension_only() {
+    if ! command -v gnome-extensions >/dev/null 2>&1; then
+        warn 'gnome-extensions not found: skipping the GNOME extension.'
+        return 0
+    fi
+    ensure_work
+    fetch SHA256SUMS
+    verify_signature
+    fetch "$EXT_UUID.shell-extension.zip"
+    verify_asset "$EXT_UUID.shell-extension.zip"
+    install_extension "$work/$EXT_UUID.shell-extension.zip"
 }
 
 do_uninstall() {

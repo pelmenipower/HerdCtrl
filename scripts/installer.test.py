@@ -68,6 +68,7 @@ esac
     # Records the call and starts a stand-in tray so the installer sees it running.
     "setsid": r"""#!/usr/bin/env bash
 echo "setsid $*" >> "$STUB_LOG/setsid.log"
+echo "handoff=${HERDCTRL_INSTALL_HANDOFF-unset}" >> "$STUB_LOG/setsid.env"
 if [[ -n ${STUB_IDLE:-} ]]; then
   ( exec -a herdctrl "$STUB_IDLE" --tray </dev/null >/dev/null 2>&1 & echo $! >> "$STUB_LOG/trays.pids" )
 fi
@@ -330,6 +331,16 @@ class TestInstall(InstallerCase):
         self.assertEqual(self.run_install(redirect="0.2.0").returncode, 0)
         self.assertEqual(entry.read_text(), text)
 
+    def test_autostart_with_wrapper_command_is_left_alone(self):
+        self.release("0.2.0")
+        autostart = self.config / "autostart"
+        autostart.mkdir()
+        entry = autostart / "herdctrl.desktop"
+        text = "[Desktop Entry]\nExec=env FOO=1 /opt/x/herdctrl --tray\n"
+        entry.write_text(text)
+        self.assertEqual(self.run_install(redirect="0.2.0").returncode, 0)
+        self.assertEqual(entry.read_text(), text)
+
     def test_autostart_is_never_created(self):
         self.release("0.2.0")
         self.run_install(redirect="0.2.0")
@@ -404,7 +415,7 @@ class TestInstall(InstallerCase):
         self.release("0.3.0", herdctrl=fixture_herdctrl("0.3.0", output="oops"))
         r = self.run_install(redirect="0.3.0")
         self.assertEqual(r.returncode, 1)
-        self.assertIn('the downloaded program does not start (expected "herdctrl 0.3.0")', r.stderr)
+        self.assertIn('the new program does not start (expected "herdctrl 0.3.0")', r.stderr)
         self.assertEqual((self.bin / "herdctrl").read_bytes(), old)
         self.assertEqual(self.stamp(), "0.2.0\n")
 
@@ -439,6 +450,37 @@ class TestInstall(InstallerCase):
         self.assertIn("Handing over to the installer of HerdCtrl 0.3.0", r.stdout)
         self.assertNotIn("tar.gz", self.read_log("curl.log"))
         self.assert_nothing_installed()
+
+    def test_restarted_tray_does_not_inherit_handoff(self):
+        self.release("0.3.0", install_sh=self.install_sh + b"\n# newer\n")
+        self.spawn_herdctrl("--tray")
+        r = self.run_install("--no-packages", redirect="0.3.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Handing over to the installer of HerdCtrl 0.3.0", r.stdout)
+        self.assertEqual(self.stamp(), "0.3.0\n")
+        self.assertEqual(self.read_log("setsid.env"), "handoff=unset\n")
+
+    def test_empty_option_values_are_usage_errors(self):
+        for args in (["--version", ""], ["--archive", ""]):
+            r = self.run_install(*args)
+            self.assertEqual(r.returncode, 2, args)
+            self.assertIn("needs a value", r.stderr)
+
+    def test_failure_after_tray_stop_restarts_tray(self):
+        self.release("0.2.0")
+        self.release("0.3.0")
+        self.assertEqual(self.run_install(redirect="0.2.0").returncode, 0)
+        self.spawn_herdctrl("--tray")
+        (self.log / "setsid.log").unlink(missing_ok=True)
+        self.bin.chmod(0o555)  # replacing the program now fails
+        try:
+            r = self.run_install(redirect="0.3.0")
+        finally:
+            self.bin.chmod(0o755)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("restarting the tray", r.stderr)
+        self.assertIn(f"setsid -f {self.bin}/herdctrl --tray", self.read_log("setsid.log"))
+        self.assertEqual(self.stamp(), "0.2.0\n")
 
     def test_piped_script_does_not_hand_over(self):
         self.release("0.3.0", install_sh=b"#!/usr/bin/env bash\nexit 7\n")
@@ -504,6 +546,7 @@ class TestTray(InstallerCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(tray.poll())
         self.assertIn("The tray keeps running the previous version until you quit and restart it.", r.stdout)
+        self.assertNotIn("Start HerdCtrl from the app menu.", r.stdout)
 
 
 class TestCheck(InstallerCase):
@@ -633,8 +676,21 @@ class TestExtension(InstallerCase):
         self.write_stamp("0.2.0")
         r = self.run_install(redirect="0.2.0", env=self.GNOME)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("The GNOME extension is missing. Run: herdctrl-update --reinstall", r.stdout)
+        self.assertIn("The GNOME extension is missing. Run: herdctrl-update --extension", r.stdout)
         self.assertIn("Nothing to do.", r.stdout)
+
+    def test_extension_flag_on_current_version_installs_it(self):
+        self.release("0.2.0")
+        self.write_stamp("0.2.0")
+        tray = self.spawn_herdctrl("--tray")
+        r = self.run_install("--extension", redirect="0.2.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("gnome-extensions install --force", self.read_log("gext.log"))
+        self.assertIn("Log out and back in to load the new extension.", r.stdout)
+        self.assertIsNone(tray.poll(), "the tray must not be stopped")
+        self.assertEqual(self.read_log("setsid.log"), "")
+        self.assertFalse((self.bin / "herdctrl").exists())
+        self.assertNotIn("tar.gz", self.read_log("curl.log"))
 
     def test_uninstall_removes_extension(self):
         self.release("0.2.0")
