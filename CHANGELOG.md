@@ -35,6 +35,7 @@ Erste Fassung, entwickelt auf `feature/initial-app` vom 2026-10-31 bis 2026-11-1
 
 ### Doku und Prüfung
 
+- Neu: Release-Workflow für Tags `v*`. Er baut die Linux-Dateien, signiert `SHA256SUMS` schlüssellos mit Sigstore, legt eine GitHub-Build-Bescheinigung an und erstellt nur einen Entwurf, den der Benutzer veröffentlicht. Die Prüfung beschreiben beide Handbücher.
 - Doku: README nach Shellherd-Vorbild mit Galerie, ausführliches Handbuch auf Deutsch und Englisch, Designsystem, Anleitung für die Screenshots, `CLAUDE.md` sowie die Skills `run-app` und `feature-pipeline`.
 - Tests: Bedienabläufe mit `egui_kittest` ohne GPU. Dazu kommen Screenshots auf Abruf, eine X11-Integration unter Xvfb und Openbox in der CI (jetzt mit `xwininfo` gemessen), ein Rust↔GJS-Protokolltest und Live-Tests für GNOME.
 - Messung: Programmdatei 7,8 MB und 69 ms bis zum sichtbaren Editorfenster. Der Editor braucht 75,7 MB (PRD-Ziel 30 MB nicht erreicht), der Tray 1,8 MB eigenen Speicher. Details in [VALIDATION.md](VALIDATION.md).

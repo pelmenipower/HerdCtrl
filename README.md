@@ -75,7 +75,7 @@ These images are rendered from the real editor code with fixed sample data, not 
 
 ## Install from source
 
-There are no release packages yet. Build with a stable Rust toolchain ([rustup](https://rustup.rs)):
+There are no release packages yet. Future releases are signed with Sigstore; the [user guide](docs/manual.md#verify-a-download) explains how to verify them. Until then, build with a stable Rust toolchain ([rustup](https://rustup.rs)):
 
 ```sh
 sudo apt-get install build-essential pkg-config libx11-dev libxi-dev libxcursor-dev \
