@@ -76,15 +76,27 @@ Upon triggering a View:
 
 ---
 
+### 4.7 Installation and updates (user-approved scope extension)
+
+* Linux releases install per user with one command: `install.sh` (a Windows `install.ps1` follows once a Windows build exists). It downloads the signed release, verifies every file against the release's `SHA256SUMS` before installing anything (and the Sigstore bundle when `cosign` is available), places the executable in `~/.local/bin`, adds the desktop entry and icons, installs the GNOME Shell extension on GNOME/Wayland, and installs missing runtime packages through APT, the only step that needs sudo.
+* Running the installer again updates. It stops a running tray, installs, starts the tray with the new version, and points an existing autostart entry at the installed executable. `--check` reports the installed and latest version without installing; `--uninstall` removes the installation and keeps the configuration unless asked otherwise. The installer never executes a previously installed executable to learn its version.
+* The tray checks for a newer release at most once a day with a single HTTPS request to the GitHub releases page (no account, no telemetry beyond the IP address and curl's user agent), notifies once per new version, and offers the update in its menu; the editor shows it in the header. The check can be turned off. The application never downloads or replaces itself: the installer, started in a terminal on request, is the only update path.
+* `herdctrl --version` prints the version and unknown arguments are rejected instead of starting the editor. The tray releases its hotkey grabs and lock on SIGTERM, so an updater can restart it without waiting for the extension's heartbeat expiry.
+
+---
+
 ## 5. System Architecture & File Structure
 
 ```text
 herdctrl/
 ├── Cargo.toml
+├── install.sh        # Per-user installer and updater (installed as herdctrl-update)
+├── update.sh         # Update entry point for the release page
 ├── assets/
 │   └── icon.png
 └── src/
     ├── main.rs           # Application entrypoint & event loop
+    ├── cli.rs            # Command-line modes (--tray, --version, --help)
     ├── tray.rs           # Background tray process & global hotkeys
     ├── ui/
     │   ├── mod.rs        # UI module routing
@@ -93,6 +105,7 @@ herdctrl/
     ├── core/
     │   ├── mod.rs
     │   ├── config.rs     # JSON load/save mechanisms
+    │   ├── update.rs     # Release check state, version parsing, updater launch
     │   ├── monitor.rs    # Monitor discovery & coordinate translation
     │   └── launcher.rs   # Async process execution & handle polling
     └── os/
