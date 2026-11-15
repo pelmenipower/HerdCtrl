@@ -316,28 +316,11 @@ The seven gallery images in `docs/images` come from the opt-in test `render_docs
 
 Not covered by images: tray menu, notifications and monitor identification labels, which are drawn outside the editor.
 
-## Vulkan renderer — 2026-11-10
+## Signed release workflow — 2026-11-15
 
-**Result:** editor VmRSS dropped from about 77–85 MB (OpenGL) to **28.8 or 30.5 MB** (Vulkan). PRD 6 (< 30 MB) is therefore **met in some starts only**. Binary 9,219,304 bytes (< 15 MB). Visible after 30 ms (< 100 ms).
+Method: dry run of `.github/workflows/release.yml` on PR #4 (run 43707190870, `ubuntu-24.04`, pull_request event).
 
-**Change.** eframe also builds its `wgpu` renderer. The editor uses wgpu with the Vulkan backend only. Before any thread starts, `renderer::prepare` sets `VK_LOADER_DRIVERS_SELECT` to the drivers of the primary GPU's vendor, read from `/sys/class/drm/*/device/{vendor,boot_vga}`, so the Vulkan loader opens no LLVM-linked driver (lavapipe, RADV) and no unused vendor's driver. Without a known vendor it only disables `*lvp*,*radeon*`. A driver choice the user set (`VK_LOADER_DRIVERS_SELECT`, `…_DISABLE`, `VK_ICD_FILENAMES`, `VK_DRIVER_FILES`, `VK_ADD_DRIVER_FILES`) is left alone. If eframe reports a wgpu error, the editor re-executes `/proc/self/exe` with `HERDCTRL_RENDERER=glow`. The variables it sets for itself are removed from every child process (apps, `sh -c` commands, tray, identification helper; `os::child_env`), so launched programs see all drivers. egui's bundled fonts are dropped; ⬚ and ⟳ became ▢ and ↻ (present in Inter), and the search magnifier is painted. The monitor identification helper stays on OpenGL and now loads Inter too.
-
-**Method.** `scripts/measure-rss.sh 5` (throwaway `XDG_CONFIG_HOME`, one warm-up, sample one second after the editor's own window is visible), same machine as the RSS investigation: Intel Meteor Lake, Mesa 26.0.8, Vulkan loader 1.4.341, GNOME 50 Wayland, editor via XWayland. System load was below 2.1 for the final series. An earlier series at load 12 (other users' `node` processes) is discarded for timings.
-
-| Series (5 starts each, median) | VmRSS KiB | RssAnon | RssFile | Visible ms |
-|---|---|---|---|---|
-| Vulkan 1 | 28,776 | 9,240 | 19,504 | 31 |
-| Vulkan 2 | 30,496 | 11,048 | 19,456 | 30 |
-| Vulkan 3 | 30,476 | 11,068 | 19,452 | 30 |
-| OpenGL (`HERDCTRL_RENDERER=glow`) | 85,400 | 16,508 | 68,876 | 64 |
-| Fallback (`VK_LOADER_DRIVERS_SELECT='*does-not-exist*'`) | 85,472 | 16,484 | 68,988 | 81 |
-
-Single starts are bimodal: about 28.7 MB or about 30.6 MB, with nothing in between (for example 9 of 12 starts high in one probe, 2 of 8 in another).
-
-**The 1.8 MB difference.** It is live heap memory, fixed within 0.3 s of the start and stable afterwards. A temporary, uncommitted `mtrace` build (glibc `libc_malloc_debug`) compared the live allocations of 8 starts: the only call site that differs is `libvulkan_intel.so+0x5effa`, which holds 80 blocks of 58,824 bytes in low starts and 112 in high ones (4.6 vs 6.4 MB). Under `strace` the high case never occurs, so it depends on start-up timing. Ruled out: Mesa shader cache (`MESA_SHADER_CACHE_DISABLE=true`), glibc arenas (`MALLOC_ARENA_MAX=1`/`2`), the X11 scale factor (`WINIT_X11_SCALE_FACTOR=1`), wgpu's `desired_maximum_frame_latency = 1`, and a `malloc_trim(0)` after start-up (the memory is in use, not free). None of these was kept.
-
-**Other numbers.** Dropping egui's fonts saved about 0.4 MB RSS and 1.4 MB of binary. The OpenGL path is 8 MB larger than before the change (85 vs 77 MB) because the binary now contains wgpu; it only applies to systems without a usable Vulkan device. The fallback path costs one failed Vulkan enumeration and one extra exec, and was visible after 81 ms here.
-
-**Checks.** Pixels of the real Vulkan window and of the forced fallback window were read back over X11 and are correct. The tray started by the editor carries no `VK_*` or `HERDCTRL_*` variables. Only `libvulkan_intel.so` is mapped. `cargo fmt --check`, clippy with warnings denied, `cargo test --locked` (76 passed, 9 opt-in ignored) and the release build passed. The UI snapshots and the gallery were regenerated and reviewed without egui's fonts. An Opus review found 3 important and 7 minor points: fixed were the inherited environment, the discrete GPU on hybrid systems, fallback only on wgpu errors, `/proc/self/exe`, the additional loader variables, and this record. Documented without code: runtime GPU errors (device lost) panic without fallback; use `HERDCTRL_RENDERER=glow`.
-
-**Not verified.** AMD (RADV links LLVM, so little gain is expected), NVIDIA's proprietary driver, hybrid laptops, virtual machines, and the monitor identification labels with Inter on a real desktop. CI runs under Xvfb without Vulkan and therefore only exercises the OpenGL fallback.
+- Packaged `herdctrl-4-merge-linux-x86_64.tar.gz` and the extension ZIP, wrote `SHA256SUMS`.
+- `cosign sign-blob` keyless with the workflow's GitHub OIDC identity: Rekor transparency log entry 3900819173.
+- `cosign verify-blob` against the exact workflow identity (`…/release.yml@refs/pull/4/merge`) and issuer `https://token.actions.githubusercontent.com`: `Verified OK`; `sha256sum --check`: both files OK.
+- Not exercised yet: the tag path (version check, build attestation, draft release). Attestations need the repository to be public; it runs on the first `v*` tag the maintainer pushes.

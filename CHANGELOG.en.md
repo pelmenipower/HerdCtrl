@@ -39,6 +39,7 @@ First version, developed on `feature/initial-app` from 2026-10-31 to 2026-11-10.
 
 ### Documentation and checks
 
+- New: release workflow for `v*` tags. It builds the Linux files, signs `SHA256SUMS` keylessly with Sigstore, adds a GitHub build attestation and only creates a draft for the maintainer to publish. Both manuals describe how to verify a download.
 - Docs: README modelled on Shellherd with a gallery, a complete user guide in English and German, the design system, instructions for the screenshots, `CLAUDE.md`, and the `run-app` and `feature-pipeline` skills.
 - Tests: interaction tests with `egui_kittest` that need no GPU. Also opt-in screenshots, an X11 integration under Xvfb and Openbox in CI (now measured with `xwininfo`), a Rust↔GJS protocol test and live GNOME tests.
 - Measured: see *Memory*; the tray needs 1.8 MB of its own memory. Details in [VALIDATION.md](VALIDATION.md).

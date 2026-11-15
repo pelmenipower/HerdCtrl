@@ -63,6 +63,22 @@ Heraus kommt eine einzige Programmdatei, `target/release/herdctrl`. Kopiere sie 
 
 Unter X11 braucht HerdCtrl zur Laufzeit `xrandr`, `wmctrl` und GNU `timeout`. Ein Desktop-Eintrag und Icons für das hicolor-Thema liegen in `assets/HerdCtrl-Iconset/linux/`.
 
+### Download prüfen
+
+Release-Dateien baut und signiert der Workflow `.github/workflows/release.yml` auf GitHub, nie ein Entwicklerrechner. Es gibt keinen gespeicherten Signaturschlüssel: [Sigstore](https://www.sigstore.dev) hält die GitHub-Identität des Workflows in einem öffentlichen Transparenzlog fest. Jedes Release enthält `SHA256SUMS`, dessen Signatur `SHA256SUMS.sigstore.json`, das Programmarchiv und das ZIP der Erweiterung.
+
+Prüfe zuerst die Signatur mit [cosign](https://docs.sigstore.dev/cosign/system_config/installation/), dann die Dateien (`v0.1.0` durch das Release ersetzen):
+
+```sh
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity https://github.com/pelmenipower/HerdCtrl/.github/workflows/release.yml@refs/tags/v0.1.0 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+Alternativ prüft `gh attestation verify herdctrl-v0.1.0-linux-x86_64.tar.gz --repo pelmenipower/HerdCtrl` die Build-Bescheinigung von GitHub. Linux warnt beim Start nicht vor unsignierten Programmen. Ob ein Download echt ist, zeigen deshalb nur diese Prüfungen. Windows-Versionen und deren Codesignatur gibt es noch nicht.
+
 ### GNOME-50-Erweiterung
 
 Unter GNOME/Wayland spricht HerdCtrl über den Session-D-Bus mit seiner eigenen Shell-Erweiterung. Installiere sie einmal aus dem Repository:

@@ -61,6 +61,22 @@ The result is a single executable, `target/release/herdctrl`. Copy it somewhere 
 
 X11 needs `xrandr`, `wmctrl` and GNU `timeout` at runtime. A desktop entry and themed icons are prepared in `assets/HerdCtrl-Iconset/linux/`.
 
+### Verify a download
+
+Release files are built and signed by the workflow `.github/workflows/release.yml` on GitHub, never on a developer machine. There is no stored signing key: [Sigstore](https://www.sigstore.dev) records the workflow's GitHub identity in a public transparency log. Each release contains `SHA256SUMS`, its signature bundle `SHA256SUMS.sigstore.json`, the program archive and the extension ZIP.
+
+Check the signature with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/), then the files (replace `v0.1.0` with the release):
+
+```sh
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity https://github.com/pelmenipower/HerdCtrl/.github/workflows/release.yml@refs/tags/v0.1.0 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+Alternatively, `gh attestation verify herdctrl-v0.1.0-linux-x86_64.tar.gz --repo pelmenipower/HerdCtrl` checks GitHub's build attestation. Linux does not warn about unsigned programs on start, so these checks are the way to make sure a download is genuine. Windows builds and their code signing are not available yet.
+
 ### GNOME 50 extension
 
 On GNOME/Wayland, HerdCtrl talks to its own Shell extension over the session D-Bus. Install it once from the repository:
