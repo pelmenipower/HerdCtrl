@@ -38,7 +38,7 @@ jobs:
           python3 scripts/package-gnome-extension.py
           name="herdctrl-${GITHUB_REF_NAME//\//-}-linux-x86_64"
           mkdir -p "$DIST/$name"
-          cp target/release/herdctrl README.md "$DIST/$name/"
+          cp target/release/herdctrl README.md LICENSE "$DIST/$name/"
           cp -r assets/HerdCtrl-Iconset/linux "$DIST/$name/desktop"
           tar -C "$DIST" -czf "$DIST/$name.tar.gz" "$name"
           rm -r "$DIST/$name"

@@ -65,7 +65,7 @@ Unter X11 braucht HerdCtrl zur Laufzeit `xrandr`, `wmctrl` und GNU `timeout`. Ei
 
 ### Download prüfen
 
-Release-Dateien baut und signiert der Workflow `.github/workflows/release.yml` auf GitHub, nie ein Entwicklerrechner. Es gibt keinen gespeicherten Signaturschlüssel: [Sigstore](https://www.sigstore.dev) hält die GitHub-Identität des Workflows in einem öffentlichen Transparenzlog fest. Jedes Release enthält `SHA256SUMS`, dessen Signatur `SHA256SUMS.sigstore.json`, das Programmarchiv und das ZIP der Erweiterung.
+Fertige x86_64-Dateien für Ubuntu 24.04 oder neuer liegen auf der [Releases-Seite](https://github.com/pelmenipower/HerdCtrl/releases). Das Archiv enthält die Programmdatei `herdctrl`, die Desktop-Dateien und die Lizenz. Installiert sein müssen die Laufzeitpakete aus dem Bau-Befehl oben (ohne die `-dev`-Pakete und den Compiler). Release-Dateien baut und signiert der Workflow `.github/workflows/release.yml` auf GitHub, nie ein Entwicklerrechner. Es gibt keinen gespeicherten Signaturschlüssel: [Sigstore](https://www.sigstore.dev) hält die GitHub-Identität des Workflows in einem öffentlichen Transparenzlog fest. Jedes Release enthält `SHA256SUMS`, dessen Signatur `SHA256SUMS.sigstore.json`, das Programmarchiv und das ZIP der Erweiterung.
 
 Prüfe zuerst die Signatur mit [cosign](https://docs.sigstore.dev/cosign/system_config/installation/), dann die Dateien (`v0.1.0` durch das Release ersetzen):
 

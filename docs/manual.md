@@ -63,7 +63,7 @@ X11 needs `xrandr`, `wmctrl` and GNU `timeout` at runtime. A desktop entry and t
 
 ### Verify a download
 
-Release files are built and signed by the workflow `.github/workflows/release.yml` on GitHub, never on a developer machine. There is no stored signing key: [Sigstore](https://www.sigstore.dev) records the workflow's GitHub identity in a public transparency log. Each release contains `SHA256SUMS`, its signature bundle `SHA256SUMS.sigstore.json`, the program archive and the extension ZIP.
+Prebuilt x86_64 files for Ubuntu 24.04 or newer are on the [Releases page](https://github.com/pelmenipower/HerdCtrl/releases). The archive contains the `herdctrl` executable, the desktop files and the license; the runtime packages from the build command above (without the `-dev` packages and the compiler) must be installed. Release files are built and signed by the workflow `.github/workflows/release.yml` on GitHub, never on a developer machine. There is no stored signing key: [Sigstore](https://www.sigstore.dev) records the workflow's GitHub identity in a public transparency log. Each release contains `SHA256SUMS`, its signature bundle `SHA256SUMS.sigstore.json`, the program archive and the extension ZIP.
 
 Check the signature with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/), then the files (replace `v0.1.0` with the release):
 
