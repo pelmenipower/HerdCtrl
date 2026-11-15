@@ -12,10 +12,13 @@ use ksni::{blocking::TrayMethods, menu::*, Icon, MenuItem};
 use std::{
     collections::HashMap,
     fs::{self, File},
-    hash::{Hash, Hasher},
-    path::PathBuf,
+    os::unix::ffi::OsStrExt,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -30,15 +33,58 @@ enum Message {
     Quit,
 }
 
+static STOP: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn request_stop(_signal: libc::c_int) {
+    // Only an atomic store: everything else is unsafe inside a signal handler.
+    STOP.store(true, Ordering::Relaxed);
+}
+
+/// SIGTERM, SIGINT and SIGHUP end the run loop through the normal shutdown.
+fn handle_stop_signals() -> Result<(), String> {
+    // SAFETY: the handler only stores to a lock-free atomic; the sigaction struct is
+    // zeroed and fully set up before use. SA_RESTART keeps other threads' blocking
+    // calls (zbus, global-hotkey, ksni) from failing with EINTR.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = request_stop as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART;
+        libc::sigemptyset(&mut action.sa_mask);
+        for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+            if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn stop_requested() -> bool {
+    STOP.load(Ordering::Relaxed)
+}
+
+/// FNV-1a, 64 bit: stable across Rust toolchains, unlike DefaultHasher.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// "herdctrl-{kind}-{:016x}.lock" over the bytes of the layouts path.
+fn lock_name(kind: &str, config: &Path) -> String {
+    format!(
+        "herdctrl-{kind}-{:016x}.lock",
+        fnv1a64(config.as_os_str().as_bytes())
+    )
+}
+
 /// Takes an exclusive per-session lock, or returns `None` if another process holds it.
 /// Locks are per layouts file, so a separate configuration gets its own tray.
 pub fn lock(kind: &str) -> Result<Option<File>, String> {
     let directory = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    let mut hasher = std::hash::DefaultHasher::new();
-    Config::path()?.hash(&mut hasher);
-    let name = format!("herdctrl-{kind}-{:016x}.lock", hasher.finish());
+    let name = lock_name(kind, &Config::path()?);
     let file = File::create(directory.join(name)).map_err(|e| e.to_string())?;
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
@@ -86,6 +132,9 @@ pub fn run() -> Result<(), String> {
         eprintln!("HerdCtrl is already running in the tray");
         return Ok(());
     };
+    if let Err(e) = handle_stop_signals() {
+        eprintln!("HerdCtrl: signal handlers not installed: {e}");
+    }
     let path = Config::path()?;
     let (tx, rx) = mpsc::channel();
     let (events, event_rx) = mpsc::channel();
@@ -110,6 +159,9 @@ pub fn run() -> Result<(), String> {
     let mut next_check = Instant::now();
     let mut autostart = autostart_enabled();
     loop {
+        if stop_requested() {
+            break;
+        }
         if Instant::now() >= next_check {
             next_check = Instant::now() + Duration::from_secs(1);
             // The editor can toggle start at login too; keep the checkmark in step.
@@ -159,6 +211,9 @@ pub fn run() -> Result<(), String> {
             Ok(Message::Quit) => break,
             Err(RecvTimeoutError::Disconnected) => unreachable!("the run loop holds a sender"),
             Err(RecvTimeoutError::Timeout) => {}
+        }
+        if stop_requested() {
+            break;
         }
         for index in hotkeys.triggered() {
             launch(&config, index, &launches);
@@ -539,5 +594,24 @@ mod tests {
     fn quotes_autostart_exec() {
         let entry = autostart_entry("/home/a b/$x/herd\"ctrl");
         assert!(entry.contains("Exec=\"/home/a b/\\$x/herd\\\"ctrl\" --tray\n"));
+    }
+
+    #[test]
+    fn fnv1a_vectors() {
+        assert_eq!(fnv1a64(b""), 0xcbf29ce484222325);
+        assert_eq!(fnv1a64(b"a"), 0xaf63dc4c8601ec8c);
+        assert_eq!(
+            lock_name("tray", Path::new("/home/u/.config/herdctrl/layouts.json")),
+            "herdctrl-tray-b7fc927f20e81cf5.lock"
+        );
+    }
+
+    #[test]
+    fn stop_signal_sets_flag() {
+        handle_stop_signals().unwrap();
+        // SAFETY: raising a signal whose handler was just installed.
+        assert_eq!(unsafe { libc::raise(libc::SIGHUP) }, 0);
+        assert!(stop_requested());
+        STOP.store(false, Ordering::Relaxed);
     }
 }
