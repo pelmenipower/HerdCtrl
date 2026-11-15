@@ -83,6 +83,19 @@ struct Updates {
 
 impl Updates {
     fn new(notifier: &Notifier) -> Self {
+        // No file access at all when disabled by the environment.
+        if update::disabled_by_env() {
+            return Self::with_path(Err(String::new())).0;
+        }
+        let (updates, problem) = Self::with_path(State::path());
+        if let Some(problem) = problem {
+            notifier.show("Update check is off until re-enabled", &problem);
+        }
+        updates
+    }
+
+    /// Loads `update.json`; an invalid file leaves the checks off but clickable.
+    fn with_path(path: Result<PathBuf, String>) -> (Self, Option<String>) {
         let mut updates = Self {
             path: None,
             state: None,
@@ -90,22 +103,26 @@ impl Updates {
             force: false,
             not_before: Instant::now() + Duration::from_secs(60),
         };
-        // No file access at all when disabled by the environment.
-        if update::disabled_by_env() {
-            return updates;
+        let path = match path {
+            Ok(path) => path,
+            Err(e) => return (updates, Some(e)),
+        };
+        updates.path = Some(path.clone());
+        match State::load(&path) {
+            Ok(state) => (updates.with_state(state), None),
+            Err(e) => (updates, Some(e)),
         }
-        match State::path().and_then(|path| State::load(&path).map(|state| (path, state))) {
-            Ok((path, state)) => {
-                updates.path = Some(path);
-                updates.state = Some(state);
-            }
-            Err(e) => notifier.show("Update check unavailable", &e),
-        }
-        updates
+    }
+
+    fn with_state(mut self, state: State) -> Self {
+        self.state = Some(state);
+        self
     }
 
     fn check(&self) -> UpdateCheck {
         match &self.state {
+            // Invalid file: unchecked but active; a click writes a new file.
+            None if self.path.is_some() => UpdateCheck::Off,
             None => UpdateCheck::Unavailable,
             Some(state) if state.enabled => UpdateCheck::On,
             Some(_) => UpdateCheck::Off,
@@ -149,7 +166,8 @@ impl Updates {
         });
     }
 
-    fn finish_check(&mut self, result: Result<update::Version, String>) {
+    /// Returns whether the result changed the state (worth saving and announcing).
+    fn finish_check(&mut self, result: Result<update::Version, String>) -> bool {
         self.running = false;
         match result {
             Ok(version) => {
@@ -157,15 +175,24 @@ impl Updates {
                     state.checked_at = update::now();
                     state.latest = Some(version.to_string());
                 }
+                true
             }
             Err(e) => {
                 eprintln!("Update check failed: {e}");
                 self.not_before = Instant::now() + Duration::from_secs(3600);
+                false
             }
         }
     }
 
     fn set_enabled(&mut self, enabled: bool, notifier: &Notifier) {
+        if self.state.is_none() && self.path.is_some() {
+            // Deliberately replaces the invalid file.
+            self.state = Some(State {
+                enabled,
+                ..State::default()
+            });
+        }
         let Some(state) = &mut self.state else { return };
         state.enabled = enabled;
         if enabled {
@@ -368,9 +395,10 @@ pub fn run() -> Result<(), String> {
                 }
             }
             Ok(Message::Checked(result)) => {
-                updates.finish_check(result);
-                updates.save(&notifier);
-                updates.notify(&notifier);
+                if updates.finish_check(result) {
+                    updates.save(&notifier);
+                    updates.notify(&notifier);
+                }
                 refresh_update(&handle, &updates);
             }
             Ok(Message::UpdateCheck(enabled)) => {
@@ -878,6 +906,48 @@ mod tests {
         assert!(!should_check(&state, false, now, now, true, 9_000_000));
     }
 
+    fn temp_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("herdctrl-tray-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("update.json")
+    }
+
+    #[test]
+    fn invalid_update_file_is_off_but_active_and_replaced_on_click() {
+        let path = temp_path("invalid");
+        std::fs::write(&path, "{not json").unwrap();
+        let (mut updates, problem) = Updates::with_path(Ok(path.clone()));
+        assert!(problem.is_some());
+        assert_eq!(updates.check(), UpdateCheck::Off);
+        // No save without a state: the invalid file stays.
+        updates.save(&Notifier::default());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{not json");
+        updates.set_enabled(true, &Notifier::default());
+        assert_eq!(updates.check(), UpdateCheck::On);
+        assert_eq!(State::load(&path).unwrap(), State::default());
+    }
+
+    #[test]
+    fn missing_path_is_unavailable() {
+        let (updates, problem) = Updates::with_path(Err("x".into()));
+        assert!(problem.is_some());
+        assert_eq!(updates.check(), UpdateCheck::Unavailable);
+    }
+
+    #[test]
+    fn failed_check_changes_nothing() {
+        let (updates, _) = Updates::with_path(Ok(temp_path("fail")));
+        let mut updates = updates;
+        assert!(!updates.finish_check(Err("offline".into())));
+        assert_eq!(updates.state.as_ref().unwrap().checked_at, 0);
+        assert!(updates.finish_check(Ok(update::Version::parse("1.2.3").unwrap())));
+        assert_eq!(
+            updates.state.as_ref().unwrap().latest.as_deref(),
+            Some("1.2.3")
+        );
+    }
+
     #[test]
     fn fnv1a_vectors() {
         assert_eq!(fnv1a64(b""), 0xcbf29ce484222325);
@@ -895,5 +965,9 @@ mod tests {
         assert_eq!(unsafe { libc::raise(libc::SIGHUP) }, 0);
         assert!(stop_requested());
         STOP.store(false, Ordering::Relaxed);
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            // SAFETY: restoring the default disposition.
+            unsafe { libc::signal(signal, libc::SIG_DFL) };
+        }
     }
 }

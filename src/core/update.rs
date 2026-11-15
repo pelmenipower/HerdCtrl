@@ -273,6 +273,11 @@ pub fn updater_script(
     Ok(script)
 }
 
+/// Set by an installer hand-off; a leaked value would skip the next hand-off.
+fn strip_handoff(command: &mut Command) {
+    command.env_remove("HERDCTRL_INSTALL_HANDOFF");
+}
+
 /// Blocking (application discovery, terminal detection): call from a worker thread.
 /// Opens a terminal that runs `updater_script(...)`.
 pub fn launch_updater() -> Result<(), String> {
@@ -289,6 +294,7 @@ pub fn launch_updater() -> Result<(), String> {
         command.env_remove("HERDCTRL_TERMINAL_COMMAND");
         command
     };
+    strip_handoff(&mut command);
     let child = crate::os::child_env::clean(&mut command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -302,6 +308,16 @@ pub fn launch_updater() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn updater_env_drops_install_handoff() {
+        let mut command = Command::new("true");
+        strip_handoff(&mut command);
+        let removed = command
+            .get_envs()
+            .any(|(k, v)| k == "HERDCTRL_INSTALL_HANDOFF" && v.is_none());
+        assert!(removed);
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
