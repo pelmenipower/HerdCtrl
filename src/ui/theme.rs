@@ -301,6 +301,7 @@ pub enum Tone {
     Warn,
     Danger,
     Muted,
+    Accent,
 }
 
 impl Tone {
@@ -310,6 +311,7 @@ impl Tone {
             Self::Warn => p.warn,
             Self::Danger => p.danger,
             Self::Muted => p.muted,
+            Self::Accent => p.accent,
         }
     }
 }
@@ -317,10 +319,11 @@ impl Tone {
 /// Rounded status pill with a colored dot.
 pub fn pill(ui: &mut egui::Ui, text: &str, tone: Tone) -> Response {
     let p = palette(ui.ctx());
-    let alert = matches!(tone, Tone::Warn | Tone::Danger);
+    let alert = matches!(tone, Tone::Warn | Tone::Danger | Tone::Accent);
     let (fill, edge) = match tone {
         Tone::Warn => (p.warn_soft, p.warn),
         Tone::Danger => (p.danger_soft, p.danger),
+        Tone::Accent => (p.accent_soft, p.accent),
         _ => (Color32::TRANSPARENT, p.border),
     };
     Frame::NONE
@@ -527,6 +530,13 @@ pub fn search_icon(ui: &mut egui::Ui, color: Color32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accent_tone_uses_the_accent_role() {
+        for p in [dark(), light()] {
+            assert_eq!(Tone::Accent.color(&p), p.accent);
+        }
+    }
 
     #[test]
     fn appearance_cycles_and_falls_back_to_dark() {

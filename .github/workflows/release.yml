@@ -38,12 +38,13 @@ jobs:
           python3 scripts/package-gnome-extension.py
           name="herdctrl-${GITHUB_REF_NAME//\//-}-linux-x86_64"
           mkdir -p "$DIST/$name"
-          cp target/release/herdctrl README.md LICENSE "$DIST/$name/"
+          cp target/release/herdctrl install.sh README.md LICENSE "$DIST/$name/"
           cp -r assets/HerdCtrl-Iconset/linux "$DIST/$name/desktop"
           tar -C "$DIST" -czf "$DIST/$name.tar.gz" "$name"
           rm -r "$DIST/$name"
           cp target/herdctrl@herdctrl.local.shell-extension.zip "$DIST/"
-          (cd "$DIST" && sha256sum -- *.tar.gz *.zip > SHA256SUMS)
+          cp install.sh update.sh "$DIST/"
+          (cd "$DIST" && sha256sum -- *.tar.gz *.zip install.sh update.sh > SHA256SUMS)
           cat "$DIST/SHA256SUMS"
       - uses: sigstore/cosign-installer@v3
       - name: Sign checksums (Sigstore keyless)
@@ -72,5 +73,8 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
             --title "HerdCtrl $GITHUB_REF_NAME" \
-            --notes "Signed Linux build. Verify before use: see docs/manual.md#verify-a-download." \
+            --notes "Signed Linux build. Verify before use: see docs/manual.md#verify-a-download.
+
+          Install or update: \`curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh | bash\`
+          Update later: \`herdctrl-update\`" \
             "$DIST"/*

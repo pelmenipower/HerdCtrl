@@ -4,6 +4,13 @@ All notable changes to HerdCtrl. Deutsche Fassung: [CHANGELOG.md](CHANGELOG.md).
 
 ## [Unreleased]
 
+### Installation and updates
+
+- New: per-user installer `install.sh` (one `curl | bash` command) and `herdctrl-update` with `--check`, `--reinstall`, `--extension`, `--uninstall` and `--purge`. Downloads are verified against `SHA256SUMS`; `--archive` for a local file does not check checksums. It works for releases from 0.2.0 on.
+- New: the tray checks for releases once a day (one HTTPS request to github.com), notifies once and adds **Update to X…** to its menu. **Check for updates daily** and `HERDCTRL_NO_UPDATE_CHECK` turn the check off.
+- New: the editor header shows an **Update available** pill with **Update now** and **What's new**.
+- New: `herdctrl --version` and `herdctrl --help`. State is kept in `update.json` and an installed-version stamp.
+
 ## [0.1.0] – 2026-11-15
 
 First version, developed on `feature/initial-app` from 2026-10-31 to 2026-11-10.

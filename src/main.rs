@@ -1,17 +1,31 @@
+mod cli;
 mod core;
 mod os;
 mod tray;
 mod ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::args().nth(1).as_deref() == Some("--identify-monitors") {
-        let raw = std::env::args()
-            .nth(2)
-            .ok_or("Missing monitor identification data")?;
-        return ui::identify::run_helper(&raw);
-    }
-    if std::env::args().nth(1).as_deref() == Some("--tray") {
-        return tray::run().map_err(Into::into);
+    match cli::parse(
+        std::env::args_os()
+            .skip(1)
+            .map(|a| a.to_string_lossy().into_owned()),
+    ) {
+        cli::Mode::Version => {
+            println!("{}", cli::version_line());
+            return Ok(());
+        }
+        cli::Mode::Help => {
+            print!("{}", cli::USAGE);
+            return Ok(());
+        }
+        cli::Mode::Unknown(message) => {
+            eprintln!("herdctrl: {message}");
+            eprint!("{}", cli::USAGE);
+            std::process::exit(2);
+        }
+        cli::Mode::Identify(raw) => return ui::identify::run_helper(&raw),
+        cli::Mode::Tray => return tray::run().map_err(Into::into),
+        cli::Mode::Editor => {}
     }
     // Editor only, and before any thread exists: it sets variables the Vulkan loader reads.
     ui::renderer::prepare();

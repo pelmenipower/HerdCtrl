@@ -46,6 +46,7 @@ XDG_CONFIG_HOME=$RUN ./target/release/herdctrl &
 
 Wichtig:
 
+- Isolierte Instanzen immer mit `HERDCTRL_NO_UPDATE_CHECK=1` starten (`XDG_CONFIG_HOME=$RUN HERDCTRL_NO_UPDATE_CHECK=1 ./target/release/herdctrl &`). Sonst fragt der Tray von sich aus bei github.com nach Updates und zeigt womöglich eine Update-Pille oder Benachrichtigung.
 - Der Editor startet beim Öffnen **einen eigenen Tray** (`herdctrl --tray`) für diese Konfiguration. Beende beim Aufräumen genau die Prozesse, die du gestartet hast. Den Tray findest du, indem du bei jedem `herdctrl --tray` in `/proc/<pid>/environ` nach `XDG_CONFIG_HOME=$RUN` suchst. Fremde HerdCtrl-Prozesse des Benutzers nie beenden.
 - Unter GNOME besitzt immer nur eine Instanz die Kürzel. Der echte Tray des Benutzers behält sie, die Erweiterung lehnt einen zweiten Besitzer ab. Der isolierte Tray kann dann eine Konflikt-Benachrichtigung zeigen; das ist erwartet.
 - **Keine View starten, die echte Anwendungen betrifft.** Ein Start verschiebt vorhandene Fenster des Benutzers (Browser, Terminals). Zum Testen nur Zonen mit eigenen Befehlen für Wegwerf-Fenster verwenden, zum Beispiel `xterm -T herdctrl-test -e sleep 30`, und nur nach Rückfrage auf dem echten Desktop.

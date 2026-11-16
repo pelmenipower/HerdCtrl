@@ -4,6 +4,15 @@ Alle nennenswerten Änderungen an HerdCtrl. English version: [CHANGELOG.en.md](C
 
 ## [Unveröffentlicht]
 
+### Installation und Updates
+
+- Neu: Installation für den Benutzer per Einzeiler (`curl -fsSL https://github.com/pelmenipower/HerdCtrl/releases/latest/download/install.sh | bash`) nach `~/.local/bin`, mit Prüfsummen (und Sigstore-Signatur, wenn `cosign` da ist), Desktop-Eintrag, Icons, GNOME-Erweiterung und fehlenden Laufzeitpaketen über APT. Gibt es ab Release 0.2.0.
+- Neu: `herdctrl-update` und `update.sh` aktualisieren, `--check` meldet nur (Exit-Code 10 bei Update), `--extension` installiert die GNOME-Erweiterung ohne Quellbaum. `--archive` installiert eine lokale Datei ohne Prüfsummen.
+- Neu: `--uninstall` entfernt HerdCtrl und behält die Layouts, `--purge` löscht auch die Konfiguration.
+- Neu: Der Tray prüft höchstens einmal pro Tag per HTTPS bei github.com auf neue Releases, meldet sie per Benachrichtigung und mit **Update to X…**. Abschaltbar mit **Check for updates daily** oder `HERDCTRL_NO_UPDATE_CHECK`. Der Editor zeigt die Pille **Update available** mit **Update now** und **What's new**.
+- Neu: `herdctrl --version` und `herdctrl --help`. Neue Dateien `update.json` und `installed-version`.
+- Geändert: Der Hash der Sperrdateien für Editor und Tray nutzt FNV-1a und bleibt zwischen Toolchains stabil. Ein offener Editor 0.1.0 erkennt einen neuen Editor deshalb nicht; nach dem Update den Editor schließen und neu öffnen.
+
 ## [0.1.0] – 2026-11-15
 
 Erste Fassung, entwickelt auf `feature/initial-app` vom 2026-10-31 bis 2026-11-10.
