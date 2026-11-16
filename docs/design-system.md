@@ -63,7 +63,7 @@ Kontraste (nachgerechnet 2026-11-10): `text` auf `bg`, `panel` und `raised` 13:1
 | `ghost` | Textaktion in Akzentfarbe (**Change**, **Show log**) |
 | `caps` | Abschnittsbeschriftung |
 | `kbd` | Tastenkappe für Hotkeys |
-| `pill` + `Tone` | Statusanzeige im Kopf mit Punkt und Text |
+| `pill` + `Tone` | Statusanzeige im Kopf mit Punkt und Text; `Tone::Accent` – Hinweis mit Aktion, z. B. Update |
 | `dot` | Kleiner Statuspunkt |
 | `hatch` | Schraffur für reservierte Bereiche |
 | `logo`, `appearance_icon`, `search_icon` | Gezeichnetes HerdCtrl-Zeichen, Darstellungsumschalter und Lupe |

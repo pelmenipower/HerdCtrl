@@ -8,6 +8,8 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    env:
+      HERDCTRL_NO_UPDATE_CHECK: '1'
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux dependencies
@@ -23,6 +25,11 @@ jobs:
           node --input-type=module --check < gnome-extension/herdctrl@herdctrl.local/extension.js
           bash -n scripts/install-gnome-extension.sh
           python3 scripts/package-gnome-extension.py
+      - name: Installer scripts
+        run: |
+          bash -n install.sh update.sh
+          shellcheck -S warning install.sh update.sh
+          python3 scripts/installer.test.py
       - name: Rust to GJS protocol roundtrip on an isolated bus (simulated compositor)
         run: |
           dbus-run-session -- bash -euc '

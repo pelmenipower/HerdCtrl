@@ -1525,6 +1525,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "global-hotkey",
  "ksni",
+ "libc",
  "serde",
  "serde_json",
  "shlex",
