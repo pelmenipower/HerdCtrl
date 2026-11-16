@@ -43,6 +43,15 @@ def visible_window(process):
     return result.stdout.splitlines()[0] if result.stdout.strip() else None
 
 
+def alive(pid):
+    """True until the process has exited; a zombie has already released its lock."""
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (FileNotFoundError, IndexError):
+        return False
+    return state not in ("Z", "X")
+
+
 def stop(process):
     if process and process.poll() is None:
         # The editor starts a tray child for the temporary configuration; stop it too.
@@ -50,6 +59,9 @@ def stop(process):
                                capture_output=True, text=True).stdout.split()
         for pid in trays:
             subprocess.run(["kill", pid], check=False)
+        # The tray shuts down cleanly on SIGTERM and holds its lock until it exits. A
+        # new editor started before that sees the lock taken and starts no tray.
+        wait_for(lambda: not any(alive(pid) for pid in trays), "tray exit", timeout=5)
         process.terminate()
         try:
             process.wait(timeout=3)
